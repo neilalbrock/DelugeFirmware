@@ -1553,6 +1553,12 @@ void usb_peri_detach(usb_utr_t* ptr, uint16_t data1, uint16_t data2)
     g_usb_peri_connected = USB_FALSE;
     detachedAsPeripheral(USB_CFG_USE_USBIP);
 
+    /* Unconfigured, so every interface is effectively back at alternate setting 0 - e.g. audio streams stop */
+    for (uint16_t i = 0; i < usb_pstd_get_interface_num(g_usb_pstd_config_num); i++)
+    {
+        usb_pstd_notify_interface_changed(i, 0);
+    }
+
 #if defined(USB_CFG_PCDC_USE) | defined(USB_CFG_PHID_USE)
     ctrl.module = USB_CFG_USE_USBIP;
     usb_set_event(USB_STS_DETACH, &ctrl);

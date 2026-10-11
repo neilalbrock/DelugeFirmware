@@ -37,6 +37,7 @@
 #include "hid/led/indicator_leds.h"
 #include "io/debug/log.h"
 #include "io/midi/midi_engine.h"
+#include "io/usb/usb_audio.h"
 #include "memory/general_memory_allocator.h"
 #include "model/instrument/kit.h"
 #include "model/mod_controllable/mod_controllable_audio.h"
@@ -1392,6 +1393,12 @@ bool doSomeOutputting() {
 		i2sRXBufferPos += (numSamplesOutputted << (NUM_MONO_INPUT_CHANNELS_MAGNITUDE + 2));
 		if (i2sRXBufferPos >= (uint32_t)getRxBufferEnd()) {
 			i2sRXBufferPos -= (SSI_RX_BUFFER_NUM_SAMPLES << (NUM_MONO_INPUT_CHANNELS_MAGNITUDE + 2));
+		}
+
+		// Send the same to the computer, if it's streaming over USB. Not while rendering stems offline, when this runs
+		// faster than real time and the codec is just getting silence.
+		if (!(stemExport.processStarted && stemExport.renderOffline)) {
+			deluge::io::usb::audio::feedOutputToHost(outputBufferForResampling.first(numSamplesOutputted));
 		}
 
 		// Go through each SampleRecorder, feeding them audio

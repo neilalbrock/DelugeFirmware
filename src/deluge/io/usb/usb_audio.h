@@ -33,11 +33,18 @@ void usbAudioPeripheralOpening(uint8_t enabled);
 #ifdef __cplusplus
 }
 
+#include <span>
+
+struct StereoSample;
+
 namespace deluge::io::usb::audio {
 
 // Whether the computer has each stream open (i.e. has selected its streaming alternate setting)
 bool isStreamingFromHost();
 bool isStreamingToHost();
+
+// Called by the audio engine with each block of frames it has just sent to the codec, exactly as sent
+void feedOutputToHost(std::span<const StereoSample> frames);
 
 } // namespace deluge::io::usb::audio
 #endif

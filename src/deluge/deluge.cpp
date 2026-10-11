@@ -50,6 +50,7 @@
 #include "io/midi/midi_device_manager.h"
 #include "io/midi/midi_engine.h"
 #include "io/midi/midi_follow.h"
+#include "io/usb/usb_audio.h"
 #include "lib/printf.h" // IWYU pragma: keep this over rides printf with a non allocating version
 #include "memory/general_memory_allocator.h"
 #include "model/clip/instrument_clip.h"
@@ -143,7 +144,8 @@ void inputRoutine() {
 	setOutputState(SPEAKER_ENABLE.port, SPEAKER_ENABLE.pin, speakerOn);
 
 	AudioEngine::renderInStereo =
-	    (AudioEngine::headphonesPluggedIn || outputPluggedInR || AudioEngine::isAnyInternalRecordingHappening());
+	    (AudioEngine::headphonesPluggedIn || outputPluggedInR || AudioEngine::isAnyInternalRecordingHappening()
+	     || deluge::io::usb::audio::isStreamingToHost());
 
 	bool lineInNow = readInput(LINE_IN_DETECT.port, LINE_IN_DETECT.pin) != 0u;
 	if (lineInNow != AudioEngine::lineInPluggedIn) {

@@ -91,6 +91,7 @@ add_executable(UnitTests
         notes_state_tests.cpp
         iterance_migration_tests.cpp
         usb_audio_descriptor_tests.cpp
+        usb_audio_stream_tests.cpp
 )
 add_test(NAME UnitTests
         COMMAND UnitTests)

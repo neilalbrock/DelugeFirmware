@@ -1393,7 +1393,9 @@ Note: these settings are saved to `SETTINGS/CommunityFeatures.XML` on your SD ca
 - `USB Audio (UAUD)` <Badge text="c1.3" variant="tip" />
   - **Experimental, in development.** When On, a Deluge connected to a computer appears as a class-compliant USB
     Audio 2.0 device (stereo, 24-bit, 44.1kHz in each direction) as well as a USB MIDI device. No driver is needed on
-    macOS, Linux or Windows 10 (1703) and later. Audio is not streamed yet.
+    macOS, Linux or Windows 10 (1703) and later.
+  - The computer receives exactly what goes to the Deluge's outputs (after master effects and volume). Audio from the
+    computer to the Deluge is not supported yet.
   - Takes effect the next time the Deluge starts up, and only applies when it is connected to a computer (not when it
     is hosting USB MIDI devices).
 
