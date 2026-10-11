@@ -1390,6 +1390,12 @@ Note: these settings are saved to `SETTINGS/CommunityFeatures.XML` on your SD ca
   - When On, the ability to trim from the start of an audio clip without needing to reverse it is enabled.
 - `Show Battery Level (BATT)` <Badge text="c1.3" variant="tip" />
   - When On, displays battery level information in the System menu. Shows voltage and percentage on OLED displays, percentage on 7-segment displays.
+- `USB Audio (UAUD)` <Badge text="c1.3" variant="tip" />
+  - **Experimental, in development.** When On, a Deluge connected to a computer appears as a class-compliant USB
+    Audio 2.0 device (stereo, 24-bit, 44.1kHz in each direction) as well as a USB MIDI device. No driver is needed on
+    macOS, Linux or Windows 10 (1703) and later. Audio is not streamed yet.
+  - Takes effect the next time the Deluge starts up, and only applies when it is connected to a computer (not when it
+    is hosting USB MIDI devices).
 
 ## 6. Sysex Handling
 

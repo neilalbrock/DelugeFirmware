@@ -59,6 +59,27 @@ static void usb_pstd_set_interface0(void);
 static void usb_pstd_set_interface3(void);
 static void usb_pstd_synch_rame1();
 
+static usb_pstd_class_request_handler_t g_usb_pstd_class_request_handler         = USB_NULL;
+static usb_pstd_interface_changed_handler_t g_usb_pstd_interface_changed_handler = USB_NULL;
+
+void usb_pstd_set_class_request_handler(usb_pstd_class_request_handler_t handler)
+{
+    g_usb_pstd_class_request_handler = handler;
+}
+
+void usb_pstd_set_interface_changed_handler(usb_pstd_interface_changed_handler_t handler)
+{
+    g_usb_pstd_interface_changed_handler = handler;
+}
+
+void usb_pstd_notify_interface_changed(uint16_t int_num, uint16_t alt_num)
+{
+    if (USB_NULL != g_usb_pstd_interface_changed_handler)
+    {
+        (*g_usb_pstd_interface_changed_handler)(int_num, alt_num);
+    }
+}
+
 /*****************************************************************************
  Exported global variables (to be accessed by other files)
  ***********************************************************************************************************************/
@@ -1145,6 +1166,11 @@ static void usb_pstd_set_configuration3(void)
 
                 /* Set pipe configuration register */
                 usb_pstd_set_pipe_register((uint16_t)USB_PERIPIPE, p_table);
+
+                for (i = 0; i < ifc; ++i)
+                {
+                    usb_pstd_notify_interface_changed(i, 0);
+                }
             }
         }
         if (USB_ERROR == cfgok)
@@ -1239,6 +1265,37 @@ static void usb_pstd_synch_rame1(void)
  ***********************************************************************************************************************/
 void usb_peri_class_request(usb_setup_t* preq, uint16_t ctsq)
 {
+    if ((USB_NULL != g_usb_pstd_class_request_handler) && ((preq->type & USB_BMREQUESTTYPETYPE) == USB_CLASS))
+    {
+        switch (ctsq)
+        {
+            case USB_CS_RDDS: /* control read data stage */
+            case USB_CS_WRDS: /* control write data stage */
+
+                if (USB_TRUE != (*g_usb_pstd_class_request_handler)(preq, ctsq))
+                {
+                    usb_pstd_set_stall_pipe0(); /* Req Error */
+                }
+                return;
+
+            case USB_CS_WRND: /* control write nodata status stage */
+
+                if (USB_TRUE == (*g_usb_pstd_class_request_handler)(preq, ctsq))
+                {
+                    usb_cstd_set_buf(USB_NULL, (uint16_t)USB_PIPE0); /* Set BUF */
+                }
+                else
+                {
+                    usb_pstd_set_stall_pipe0(); /* Req Error */
+                }
+                usb_pstd_ctrl_end((uint16_t)USB_CTRL_END); /* End control transfer. */
+                return;
+
+            default: /* Idle/setup and status stages - the usual handling below is fine */
+                break;
+        }
+    }
+
     /* Check Request type TYPE */
     if (((preq->type & USB_BMREQUESTTYPETYPE) == USB_CLASS) || ((preq->type & USB_BMREQUESTTYPETYPE) == USB_VENDOR))
     {

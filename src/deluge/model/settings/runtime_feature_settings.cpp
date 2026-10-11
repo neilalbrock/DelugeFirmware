@@ -208,6 +208,10 @@ void RuntimeFeatureSettings::init() {
 	// Shortcut Overlay
 	SetupOnOffSetting(settings[RuntimeFeatureSettingType::ShortcutOverlay],
 	                  STRING_FOR_COMMUNITY_FEATURE_SHORTCUT_OVERLAY, "shortcutOverlay", RuntimeFeatureStateToggle::On);
+
+	// USB Audio. Read when USB connects as a peripheral, so changes take effect after a restart.
+	SetupOnOffSetting(settings[RuntimeFeatureSettingType::UsbAudio], STRING_FOR_COMMUNITY_FEATURE_USB_AUDIO, "usbAudio",
+	                  RuntimeFeatureStateToggle::Off);
 }
 
 void RuntimeFeatureSettings::factoryReset(bool showPopup) {

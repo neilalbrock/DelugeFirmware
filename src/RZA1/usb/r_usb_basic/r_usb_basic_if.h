@@ -217,6 +217,8 @@ typedef struct usb_descriptor
     uint8_t* p_config_h;  /* Pointer to the configuration descriptor for Hi-speed */
     uint8_t* p_qualifier; /* Pointer to the qualifier descriptor */
     uint8_t** p_string;   /* Pointer to the string descriptor table */
+    uint16_t* p_pipetbl;  /* Pipe table, one row per endpoint descriptor in p_config_f, in the same order. NULL for
+                           * g_usb_pstd_eptbl. Added for the Deluge, which has more than one set of descriptors */
 } usb_descriptor_t;
 
 typedef struct usb_cfg

@@ -732,13 +732,16 @@ void usb_pstd_set_interface_alt(uint16_t int_num, uint16_t alt_num)
         // (Until SET_INTERFACE was fixed it always stalled, and hosts fell back to CLEAR_FEATURE(ENDPOINT_HALT),
         // which does the same as this.)
         usb_pstd_visit_interface_eps(int_num, alt_num, &usb_pstd_reset_ep_toggle);
-        return;
+    }
+    else
+    {
+        g_usb_pstd_alt_num[int_num] = alt_num;
+        usb_pstd_visit_interface_eps(int_num, USB_ALT_ANY, &usb_pstd_unconfigure_ep);
+        usb_pstd_set_eptbl_index(g_usb_pstd_config_num, int_num, alt_num);
+        usb_pstd_visit_interface_eps(int_num, alt_num, &usb_pstd_configure_ep);
     }
 
-    g_usb_pstd_alt_num[int_num] = alt_num;
-    usb_pstd_visit_interface_eps(int_num, USB_ALT_ANY, &usb_pstd_unconfigure_ep);
-    usb_pstd_set_eptbl_index(g_usb_pstd_config_num, int_num, alt_num);
-    usb_pstd_visit_interface_eps(int_num, alt_num, &usb_pstd_configure_ep);
+    usb_pstd_notify_interface_changed(int_num, alt_num);
 } /* End of function usb_pstd_set_interface_alt() */
 
 /***********************************************************************************************************************
@@ -1390,12 +1393,16 @@ void usb_peri_registration(usb_ctrl_t* ctrl, usb_cfg_t* cfg)
     usb_pcdreg_t pdriver;
 
     /* pdriver registration */
-    pdriver.p_pipetbl   = (uint16_t*)&g_usb_pstd_eptbl; /* Pipe Define Table address */
-    pdriver.p_devicetbl = cfg->p_usb_reg->p_device;     /* Device descriptor Table address */
-    pdriver.p_qualitbl  = cfg->p_usb_reg->p_qualifier;  /* Qualifier descriptor Table address */
-    pdriver.p_configtbl = cfg->p_usb_reg->p_config_f;   /* Configuration descriptor Table address */
-    pdriver.p_othertbl  = cfg->p_usb_reg->p_config_h;   /* Other configuration descriptor Table address */
-    pdriver.p_stringtbl = cfg->p_usb_reg->p_string;     /* String descriptor Table address */
+    pdriver.p_pipetbl = cfg->p_usb_reg->p_pipetbl; /* Pipe Define Table address */
+    if (USB_NULL == pdriver.p_pipetbl)
+    {
+        pdriver.p_pipetbl = (uint16_t*)&g_usb_pstd_eptbl; /* The default */
+    }
+    pdriver.p_devicetbl = cfg->p_usb_reg->p_device;    /* Device descriptor Table address */
+    pdriver.p_qualitbl  = cfg->p_usb_reg->p_qualifier; /* Qualifier descriptor Table address */
+    pdriver.p_configtbl = cfg->p_usb_reg->p_config_f;  /* Configuration descriptor Table address */
+    pdriver.p_othertbl  = cfg->p_usb_reg->p_config_h;  /* Other configuration descriptor Table address */
+    pdriver.p_stringtbl = cfg->p_usb_reg->p_string;    /* String descriptor Table address */
 
     pdriver.devdefault = &usb_peri_devdefault;                  /* Device default */
     pdriver.devconfig  = &usb_peri_configured;                  /* Device configuered */
@@ -1443,7 +1450,10 @@ void usb_peri_devdefault(usb_utr_t* ptr, uint16_t mode, uint16_t data2)
         /* Set Descriptor type. */
         /* Full-Speed Mode */
         g_usb_pstd_driver.p_configtbl[1] = USB_DT_CONFIGURATION;
-        g_usb_pstd_driver.p_othertbl[1]  = USB_DT_OTHER_SPEED_CONF;
+        if (USB_NULL != g_usb_pstd_driver.p_othertbl) // We don't have a high-speed configuration
+        {
+            g_usb_pstd_driver.p_othertbl[1] = USB_DT_OTHER_SPEED_CONF;
+        }
     }
 
     len = (uint16_t)(*(uint8_t*)((uint32_t)ptable + (uint32_t)3));

@@ -67,6 +67,9 @@ file(GLOB_RECURSE deluge_SOURCES
         # For iterance migration tests (links against the real iterancePresets[]
         # from lookuptables.cpp, already included above)
         ../../src/deluge/model/iterance/iterance_migration.cpp
+        # For USB audio descriptor tests
+        ../../src/deluge/io/usb/usb_audio_descriptor.c
+        ../../src/deluge/io/midi/r_usb_pmidi_descriptor.c
 )
 
 add_executable(UnitTests
@@ -87,6 +90,7 @@ add_executable(UnitTests
         rgb_tests.cpp
         notes_state_tests.cpp
         iterance_migration_tests.cpp
+        usb_audio_descriptor_tests.cpp
 )
 add_test(NAME UnitTests
         COMMAND UnitTests)

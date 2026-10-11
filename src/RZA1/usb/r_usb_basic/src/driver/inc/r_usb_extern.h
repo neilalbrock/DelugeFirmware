@@ -28,6 +28,7 @@
 #ifndef R_USB_EXTERN_H
 #define R_USB_EXTERN_H
 
+#include "RZA1/usb/r_usb_basic/src/driver/inc/r_usb_pstd_hooks.h"
 #include "r_usb_typedef.h"
 
 // Includes by Rohan so I can inline stuff below
@@ -508,10 +509,6 @@ void usb_p_registration(usb_ctrl_t* ctrl, usb_cfg_t* cfg);
 void usb_pdriver_init(usb_ctrl_t* ctrl, usb_cfg_t* cfg);
 
 /* r_usb_preg_abs.c */
-// Handler for a pipe serviced directly in the USB ISR rather than via the PCD task. event is USB_INT_BRDY,
-// USB_INT_BEMP or USB_INT_NRDY. Runs in interrupt context, so must be quick.
-typedef void (*usb_pstd_isr_pipe_handler_t)(uint16_t pipe, uint16_t event);
-void usb_pstd_set_isr_pipe_handler(uint16_t pipe, usb_pstd_isr_pipe_handler_t handler);
 int usb_pstd_interrupt_handler(uint16_t* type, uint16_t* status);
 void usb_pstd_save_request(void);
 uint16_t usb_pstd_chk_configured(void);
@@ -527,6 +524,7 @@ void usb_pstd_set_stall(uint16_t pipe);
 void usb_pstd_set_stall_pipe0(void);
 
 /* r_usb_pstdrequest.c */
+void usb_pstd_notify_interface_changed(uint16_t int_num, uint16_t alt_num);
 void usb_pstd_stand_req0(void);
 void usb_pstd_stand_req1(void);
 void usb_pstd_stand_req2(void);

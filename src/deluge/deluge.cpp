@@ -226,7 +226,7 @@ void setTimeUSBInitializationEnds(int32_t timeFromNow) {
 
 extern "C" void openUSBHost(void);
 extern "C" void closeUSBHost();
-extern "C" void openUSBPeripheral();
+extern "C" void openUSBPeripheral(uint8_t withAudio);
 extern "C" void closeUSBPeripheral(void);
 
 uint32_t picFirmwareVersion = 0;
@@ -819,10 +819,10 @@ extern "C" int32_t deluge_main(void) {
 	// Ideally I'd like to repeatedly switch between host and peripheral mode anytime there's no USB connection.
 	// To do that, I'd really need to know at any point in time whether the user had just made a connection, just then,
 	// that hadn't fully initialized yet. I think I sorta have that for host, but not for peripheral yet.
-	if (!anythingInitiallyAttachedAsUSBHost) {
+	bool goPeripheral = !anythingInitiallyAttachedAsUSBHost;
+	if (goPeripheral) {
 		D_PRINTLN("switching from host to peripheral");
 		closeUSBHost();
-		openUSBPeripheral();
 	}
 
 	usbLock = 0;
@@ -831,6 +831,13 @@ extern "C" int32_t deluge_main(void) {
 	runtimeFeatureSettings.readSettingsFromFile();
 	deluge::hid::display::oled_canvas::Canvas::roundedCornersEnabled =
 	    runtimeFeatureSettings.isOn(RuntimeFeatureSettingType::RoundedCorners);
+
+	// Peripheral mode waits for the community features, since USB Audio decides which descriptors the computer sees
+	if (goPeripheral) {
+		usbLock = 1;
+		openUSBPeripheral(runtimeFeatureSettings.isOn(RuntimeFeatureSettingType::UsbAudio));
+		usbLock = 0;
+	}
 	MIDIDeviceManager::readDevicesFromFile();
 	midiFollow.readDefaultsFromFile();
 	PadLEDs::setBrightnessLevel(FlashStorage::defaultPadBrightness);
