@@ -147,7 +147,10 @@ void inputRoutine() {
 	    (AudioEngine::headphonesPluggedIn || outputPluggedInR || AudioEngine::isAnyInternalRecordingHappening()
 	     || deluge::io::usb::audio::isStreamingToHost());
 
-	bool lineInNow = readInput(LINE_IN_DETECT.port, LINE_IN_DETECT.pin) != 0u;
+	// Audio from the computer over USB counts as line in - it's a stereo input, there's just no plug
+	bool lineInPlugged = readInput(LINE_IN_DETECT.port, LINE_IN_DETECT.pin) != 0u;
+	deluge::io::usb::audio::setExternalInputPluggedIn(lineInPlugged || AudioEngine::micPluggedIn);
+	bool lineInNow = lineInPlugged || deluge::io::usb::audio::isInputFromHostSelected();
 	if (lineInNow != AudioEngine::lineInPluggedIn) {
 		D_PRINTLN("line in %d", lineInNow);
 		AudioEngine::lineInPluggedIn = lineInNow;

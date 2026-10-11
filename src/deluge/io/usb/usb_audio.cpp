@@ -20,6 +20,8 @@
 #include "dsp/stereo_sample.h"
 #include "io/usb/usb_audio_descriptor.h"
 #include "io/usb/usb_audio_stream.h"
+#include "model/settings/runtime_feature_settings.h"
+#include "util/fixedpoint.h"
 #include <algorithm>
 #include <atomic>
 #include <cstddef>
@@ -46,6 +48,7 @@ static_assert(sizeof(Frame) == sizeof(StereoSample) && offsetof(StereoSample, l)
 
 namespace {
 
+bool peripheralAudioEnabled = false; // The audio function is being presented to the computer
 bool streamingFromHost = false;
 std::atomic<bool> streamingToHost = false;
 
@@ -171,6 +174,129 @@ void stopStreamToHost() {
 	USB200.D0FIFOSEL = 0;
 }
 
+/*********************************************************************************************************************
+ * Computer -> Deluge
+ *
+ * The USB ISR reads each packet as it arrives (BRDY) into fromHostRing, through the D1FIFO port. At the start of each
+ * audio routine, processInputFromHost() takes the frames the codec has captured since last time - still in the codec's
+ * input buffer, ahead of anything that reads them - and replaces them with, or mixes in, the computer's audio,
+ * resampled from the computer's clock to the codec's. So everything that uses the input - monitoring, recording,
+ * the input oscillator, live effects - gets it without knowing.
+ *********************************************************************************************************************/
+
+// Enough in hand to ride out the audio routine taking frames in blocks, and the odd late packet
+constexpr size_t kFromHostTargetFrames = 320;
+
+FrameRing<1024> fromHostRing;
+DriftResampler fromHostResampler;
+RateServo fromHostServo{kFromHostTargetFrames};
+bool fromHostPrimed; // Whether enough has been queued up to start using it
+
+bool processingInput = false;
+bool externalInputPluggedIn = false;
+uint32_t inputProcessedUpTo; // Frame of the codec's input buffer that's been processed up to
+
+// Counters, for debugging
+volatile uint32_t fromHostUnderruns;
+volatile uint32_t fromHostDroppedFrames;
+volatile uint32_t fromHostFifoNotReady;
+
+uint8_t fromHostPacket[USB_AUDIO_MAX_PACKET_SIZE] __attribute__((aligned(4)));
+Frame fromHostFrames[USB_AUDIO_MAX_FRAMES_PER_PACKET];
+
+// ISR. Reads the packet that's just arrived.
+// noinline for the same reason as writePacketToHost()
+[[gnu::noinline]] void readPacketFromHost() {
+	uint16_t fifoCtr = USB200.D1FIFOCTR;
+	if (!(fifoCtr & USB_FRDY)) {
+		fromHostFifoNotReady = fromHostFifoNotReady + 1;
+		return;
+	}
+
+	size_t numBytes = fifoCtr & USB_DTLN;
+	if (numBytes == 0 || numBytes > sizeof(fromHostPacket)) {
+		USB200.D1FIFOCTR = USB_BCLR; // Nothing to read, or bigger than the endpoint allows - discard
+		return;
+	}
+
+	// MBW is 16-bit. Reading all the data releases the buffer.
+	uint16_t* halfwords = reinterpret_cast<uint16_t*>(fromHostPacket);
+	for (size_t i = 0; i < (numBytes + 1) / 2; i++) {
+		halfwords[i] = USB200.D1FIFO.UINT16[H];
+	}
+
+	size_t numFrames = unpackFrames24(fromHostPacket, numBytes, fromHostFrames, USB_AUDIO_MAX_FRAMES_PER_PACKET);
+	size_t pushed = fromHostRing.push({fromHostFrames, numFrames});
+	fromHostDroppedFrames = fromHostDroppedFrames + (numFrames - pushed);
+}
+
+void fromHostPipeISR(uint16_t pipe, uint16_t event) {
+	if (event == USB_INT_BRDY) {
+		readPacketFromHost();
+	}
+}
+
+// Called from the PCD task when the computer selects the streaming alternate setting. By then the driver has
+// configured the pipe, with its PID at NAK.
+void startStreamFromHost() {
+	constexpr uint16_t pipe = USB_CFG_PAUDIO_ISO_FROM_HOST;
+
+	// The ISR isn't pushing yet, and the audio routine (the only other user) can't run while this does
+	fromHostRing.clear();
+	fromHostResampler.reset();
+	fromHostPrimed = false;
+
+	// Give the pipe the D1FIFO port, for CPU access (no DMA)
+	USB200.D1FIFOSEL = USB_MBW_16 | pipe;
+	while ((USB200.D1FIFOSEL & USB_CURPIPE) != pipe) {}
+
+	usb_pstd_set_isr_pipe_handler(pipe, &fromHostPipeISR);
+	USB200.BRDYENB |= (1u << pipe);
+	usb_cstd_set_buf(USB_NULL, pipe);
+
+	streamingFromHost = true;
+}
+
+// Called from the PCD task when the computer goes back to the idle alternate setting, or reconfigures. The driver has
+// already unconfigured the pipe, which disables its interrupts.
+void stopStreamFromHost() {
+	streamingFromHost = false;
+	usb_pstd_set_isr_pipe_handler(USB_CFG_PAUDIO_ISO_FROM_HOST, nullptr);
+	USB200.BRDYENB &= ~(1u << USB_CFG_PAUDIO_ISO_FROM_HOST);
+	USB200.D1FIFOSEL = 0;
+}
+
+// The computer's audio, at the codec's rate. Silence if it isn't streaming, or until enough has been queued up.
+void renderFromHost(std::span<Frame> out) {
+	if (streamingFromHost && !fromHostPrimed && fromHostRing.size() >= kFromHostTargetFrames) {
+		fromHostPrimed = true;
+		fromHostServo.reset(fromHostRing.size(), false);
+	}
+
+	if (!streamingFromHost || !fromHostPrimed) {
+		std::fill(out.begin(), out.end(), Frame{0, 0});
+		return;
+	}
+
+	fromHostResampler.setIncrement(fromHostServo.update(fromHostRing.size(), out.size()));
+	if (!fromHostResampler.render(out, fromHostRing)) {
+		// Ran dry - silence until there's enough queued up again
+		fromHostUnderruns = fromHostUnderruns + 1;
+		fromHostPrimed = false;
+	}
+}
+
+// Which frame of its input buffer the codec's DMA is writing
+uint32_t codecInputFramePosition() {
+	uint32_t bytes = (uint32_t)getRxBufferCurrentPlace() - (uint32_t)getRxBufferStart();
+	return bytes / (NUM_MONO_INPUT_CHANNELS * sizeof(int32_t));
+}
+
+RuntimeFeatureStateUsbAudioInput inputSource() {
+	return static_cast<RuntimeFeatureStateUsbAudioInput>(
+	    runtimeFeatureSettings.get(RuntimeFeatureSettingType::UsbAudioInput));
+}
+
 // Data for control reads has to stay put until the transfer completes, after the handler has returned
 uint8_t controlBuffer[16];
 
@@ -255,10 +381,11 @@ void handleInterfaceChanged(uint16_t interfaceNumber, uint16_t alternateSetting)
 
 	switch (interfaceNumber) {
 	case USB_AUDIO_IF_STREAM_FROM_HOST:
-		streamingFromHost = streaming;
 		if (streaming) {
-			// Accept packets. Nothing reads them yet, so once the buffers are full they're dropped.
-			usb_cstd_set_buf(USB_NULL, USB_CFG_PAUDIO_ISO_FROM_HOST);
+			startStreamFromHost();
+		}
+		else if (streamingFromHost) {
+			stopStreamFromHost();
 		}
 		break;
 
@@ -287,6 +414,54 @@ bool isStreamingToHost() {
 	return streamingToHost.load(std::memory_order_relaxed);
 }
 
+bool isInputFromHostSelected() {
+	return peripheralAudioEnabled && inputSource() != RuntimeFeatureStateUsbAudioInput::LineIn;
+}
+
+void setExternalInputPluggedIn(bool pluggedIn) {
+	externalInputPluggedIn = pluggedIn;
+}
+
+void processInputFromHost() {
+	if (!isInputFromHostSelected()) {
+		processingInput = false;
+		return;
+	}
+
+	uint32_t capturedUpTo = codecInputFramePosition();
+	if (!processingInput) {
+		// Just switched on. Start from here - anything before was captured as plain line in.
+		processingInput = true;
+		inputProcessedUpTo = capturedUpTo;
+		return;
+	}
+
+	// Mixing with the internal mic would just add room noise, so only mix when something's plugged in
+	bool replace = (inputSource() == RuntimeFeatureStateUsbAudioInput::Usb) || !externalInputPluggedIn;
+	volatile int32_t* input = getRxBufferStart();
+	size_t numFrames = (capturedUpTo - inputProcessedUpTo) & (SSI_RX_BUFFER_NUM_SAMPLES - 1);
+
+	Frame block[SSI_TX_BUFFER_NUM_SAMPLES];
+	while (numFrames > 0) {
+		size_t blockFrames = std::min(numFrames, std::size(block));
+		renderFromHost({block, blockFrames});
+
+		for (size_t i = 0; i < blockFrames; i++) {
+			volatile int32_t* frame = &input[inputProcessedUpTo * NUM_MONO_INPUT_CHANNELS];
+			if (replace) {
+				frame[0] = block[i].l;
+				frame[1] = block[i].r;
+			}
+			else {
+				frame[0] = add_saturate(frame[0], block[i].l);
+				frame[1] = add_saturate(frame[1], block[i].r);
+			}
+			inputProcessedUpTo = (inputProcessedUpTo + 1) & (SSI_RX_BUFFER_NUM_SAMPLES - 1);
+		}
+		numFrames -= blockFrames;
+	}
+}
+
 void feedOutputToHost(std::span<const StereoSample> frames) {
 	if (!streamingToHost.load(std::memory_order_acquire)) {
 		return;
@@ -303,7 +478,10 @@ extern "C" void usbAudioPeripheralOpening(uint8_t enabled) {
 	if (streamingToHost) {
 		stopStreamToHost();
 	}
-	streamingFromHost = false;
+	if (streamingFromHost) {
+		stopStreamFromHost();
+	}
+	peripheralAudioEnabled = enabled;
 	usb_pstd_set_class_request_handler(enabled ? &handleClassRequest : nullptr);
 	usb_pstd_set_interface_changed_handler(enabled ? &handleInterfaceChanged : nullptr);
 }

@@ -102,6 +102,28 @@ static void SetupEmulatedDisplaySetting(RuntimeFeatureSetting& setting, deluge::
 	};
 }
 
+static void SetupUsbAudioInputSetting(RuntimeFeatureSetting& setting, deluge::l10n::String displayName,
+                                      std::string_view xmlName, RuntimeFeatureStateUsbAudioInput def) {
+	setting.displayName = displayName;
+	setting.xmlName = xmlName;
+	setting.value = static_cast<uint32_t>(def);
+
+	setting.options = {
+	    {
+	        .displayName = display->haveOLED() ? "Line in" : "LINE",
+	        .value = RuntimeFeatureStateUsbAudioInput::LineIn,
+	    },
+	    {
+	        .displayName = "USB",
+	        .value = RuntimeFeatureStateUsbAudioInput::Usb,
+	    },
+	    {
+	        .displayName = display->haveOLED() ? "Line in + USB" : "BOTH",
+	        .value = RuntimeFeatureStateUsbAudioInput::LineInAndUsb,
+	    },
+	};
+}
+
 void RuntimeFeatureSettings::init() {
 	using enum deluge::l10n::String;
 	// Drum randomizer
@@ -212,6 +234,11 @@ void RuntimeFeatureSettings::init() {
 	// USB Audio. Read when USB connects as a peripheral, so changes take effect after a restart.
 	SetupOnOffSetting(settings[RuntimeFeatureSettingType::UsbAudio], STRING_FOR_COMMUNITY_FEATURE_USB_AUDIO, "usbAudio",
 	                  RuntimeFeatureStateToggle::Off);
+
+	// USB Audio input source. Takes effect immediately.
+	SetupUsbAudioInputSetting(settings[RuntimeFeatureSettingType::UsbAudioInput],
+	                          STRING_FOR_COMMUNITY_FEATURE_USB_AUDIO_INPUT, "usbAudioInput",
+	                          RuntimeFeatureStateUsbAudioInput::LineIn);
 }
 
 void RuntimeFeatureSettings::factoryReset(bool showPopup) {

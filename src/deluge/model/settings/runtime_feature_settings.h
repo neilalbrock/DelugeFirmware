@@ -41,6 +41,9 @@ enum RuntimeFeatureStateSyncScalingAction : uint32_t { SyncScaling = 0, Fill = 1
 
 enum RuntimeFeatureStateEmulatedDisplay : uint32_t { Hardware = 0, Toggle = 1, OnBoot = 2 };
 
+// Where the Deluge's audio input comes from, with USB Audio on
+enum RuntimeFeatureStateUsbAudioInput : uint32_t { LineIn = 0, Usb = 1, LineInAndUsb = 2 };
+
 /// Every setting needs to be declared in here
 enum RuntimeFeatureSettingType : uint32_t {
 	DrumRandomizer,
@@ -69,6 +72,7 @@ enum RuntimeFeatureSettingType : uint32_t {
 	RoundedCorners,
 	ShortcutOverlay,
 	UsbAudio,
+	UsbAudioInput,
 	MaxElement // Keep as boundary
 };
 

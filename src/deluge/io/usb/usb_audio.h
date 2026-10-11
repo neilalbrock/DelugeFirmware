@@ -46,5 +46,17 @@ bool isStreamingToHost();
 // Called by the audio engine with each block of frames it has just sent to the codec, exactly as sent
 void feedOutputToHost(std::span<const StereoSample> frames);
 
+// Whether the audio input comes wholly or partly from the computer, going by the USB Audio Input setting. If it does,
+// the input is stereo, as if the line input were plugged in.
+bool isInputFromHostSelected();
+
+// Tells USB audio whether anything is plugged into the line or mic inputs. If not, "Line in + USB" just uses USB,
+// rather than mixing in the internal mic.
+void setExternalInputPluggedIn(bool pluggedIn);
+
+// Called by the audio engine at the start of each routine. Replaces the frames the codec has captured since last time
+// with the computer's audio, or mixes it in, per the USB Audio Input setting - before anything reads them.
+void processInputFromHost();
+
 } // namespace deluge::io::usb::audio
 #endif

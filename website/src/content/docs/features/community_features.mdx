@@ -1394,10 +1394,18 @@ Note: these settings are saved to `SETTINGS/CommunityFeatures.XML` on your SD ca
   - **Experimental, in development.** When On, a Deluge connected to a computer appears as a class-compliant USB
     Audio 2.0 device (stereo, 24-bit, 44.1kHz in each direction) as well as a USB MIDI device. No driver is needed on
     macOS, Linux or Windows 10 (1703) and later.
-  - The computer receives exactly what goes to the Deluge's outputs (after master effects and volume). Audio from the
-    computer to the Deluge is not supported yet.
+  - The computer receives exactly what goes to the Deluge's outputs (after master effects and volume).
+  - Audio from the computer can be used as the Deluge's audio input - see `USB Audio Input` below.
   - Takes effect the next time the Deluge starts up, and only applies when it is connected to a computer (not when it
     is hosting USB MIDI devices).
+- `USB Audio Input (UAIN)` <Badge text="c1.3" variant="tip" />
+  - **Experimental, in development.** With `USB Audio` on, chooses where the Deluge's audio input comes from:
+    `Line in` (`LINE`, the default) for the line/mic inputs as usual, `USB` for audio from the computer instead, or
+    `Line in + USB` (`BOTH`) for the two mixed together (with nothing plugged into the line or mic input, this is just
+    USB - the internal mic isn't mixed in).
+  - Everything that uses the audio input follows it: monitoring, recording into audio clips, the synth input
+    oscillator and live effects. Audio from the computer is stereo, so it is treated like a plugged-in line input.
+  - Takes effect immediately.
 
 ## 6. Sysex Handling
 
