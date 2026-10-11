@@ -5617,8 +5617,10 @@ void Song::cullAudioClipVoice() {
 				AudioClip* clip = (AudioClip*)output->getActiveClip();
 				if (clip->voiceSample && clip->voiceSample->oscPos > 0) {
 					uint64_t immunity = clip->getCullImmunity();
-					lowestImmunity = immunity;
-					bestClip = clip;
+					if (immunity < lowestImmunity) {
+						lowestImmunity = immunity;
+						bestClip = clip;
+					}
 				}
 			}
 		}
