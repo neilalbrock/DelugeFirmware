@@ -288,6 +288,7 @@ void killOneVoice(size_t num_samples) {
 		if (currentSong) {
 			currentSong->cullAudioClipVoice();
 		}
+		return;
 	}
 
 	const Sound::ActiveVoice& voice = *it;
