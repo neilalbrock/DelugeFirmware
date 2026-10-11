@@ -55,25 +55,34 @@ std::atomic<bool> streamingToHost = false;
 /*********************************************************************************************************************
  * Deluge -> computer
  *
- * The audio engine pushes each frame it sends to the codec into toHostRing. The USB ISR takes them out a packet at
- * a time, whenever the pipe has a buffer free (BRDY) - which, once both its buffers are full, is once per 1ms frame
- * as the computer collects them. Each packet carries as many frames as the codec has played since the last one, so
- * the stream runs exactly at the codec's rate, and the computer follows it (asynchronous).
+ * The stream is synchronous: it runs on the computer's clock, at 44.1 frames per 1ms USB frame, so that as far as the
+ * computer is concerned both streams share one clock. The audio engine's output is on the codec's clock, so it's
+ * resampled to match: feedOutputToHost() adds each block to toHostCodecRing, and toHostResampler turns as much of it
+ * as it can into frames for toHostRing, with toHostServo steering the ratio to keep toHostRing's fill level steady.
  *
- * The ISR writes packets through the D0FIFO port, which nothing else uses, so it can never disturb MIDI's use of the
- * CFIFO port from task context.
+ * The USB ISR takes frames out of toHostRing a packet at a time, whenever the pipe has a buffer free (BRDY) - which,
+ * once both its buffers are full, is once per 1ms frame as the computer collects them. It writes them through the
+ * D0FIFO port, which nothing else uses, so it can never disturb MIDI's use of the CFIFO port from task context.
  *********************************************************************************************************************/
 
-// The audio routine renders up to SSI_TX_BUFFER_NUM_SAMPLES ahead of the codec, so the ring's fill level wobbles by
-// that much. On top of that, keep some in hand so the ISR never runs dry.
-constexpr size_t kToHostPrefillFrames = 96;
-constexpr size_t kToHostTargetFrames = kToHostPrefillFrames + SSI_TX_BUFFER_NUM_SAMPLES;
-constexpr size_t kToHostSlackFrames = 64;
+// toHostRing's fill level just after each block is added. The audio routine adds blocks of up to
+// SSI_TX_BUFFER_NUM_SAMPLES while the ISR takes frames steadily, so in between it dips by up to that much.
+constexpr size_t kToHostTargetFrames = 224;
+// The ISR starts sending real audio once this much is queued
+constexpr size_t kToHostPrimeFrames = kToHostTargetFrames - SSI_TX_BUFFER_NUM_SAMPLES / 2;
+// Frames only pile up beyond the dips and peaks if the computer stops collecting for a while
+constexpr size_t kToHostSlackFrames = 192;
 
+// Audio routine only: the codec's output, waiting to be resampled
+FrameRing<2 * SSI_TX_BUFFER_NUM_SAMPLES> toHostCodecRing;
+DriftResampler toHostResampler;
+RateServo toHostServo{kToHostTargetFrames};
+bool toHostServoRunning;
+
+// Audio routine -> ISR: frames on the computer's clock
 FrameRing<512> toHostRing;
 PacketSizer toHostSizer;
-uint32_t toHostLastCodecFrame; // Where the codec had got to in its buffer, at the last packet
-bool toHostPrimed;             // Whether enough has been queued up to start sending real audio
+std::atomic<bool> toHostPrimed; // Whether enough has been queued up to start sending real audio. Set by the ISR.
 
 // Counters, for debugging
 volatile uint32_t toHostUnderruns;
@@ -83,31 +92,24 @@ volatile uint32_t toHostFifoNotReady;
 Frame toHostFrames[PacketSizer::kMaxFrames];
 uint8_t toHostPacket[USB_AUDIO_MAX_PACKET_SIZE] __attribute__((aligned(4)));
 
-// Which frame of its buffer the codec's DMA is reading
-uint32_t codecFramePosition() {
-	uint32_t bytes = (uint32_t)getTxBufferCurrentPlace() - (uint32_t)getTxBufferStart();
-	return bytes / (NUM_MONO_OUTPUT_CHANNELS * sizeof(int32_t));
-}
-
 // ISR. Writes the next packet into whichever of the pipe's buffers is free.
-// noinline: inlining this into both its callers crashes GCC 14.2 during LTO (internal compiler error)
-[[gnu::noinline]] void writePacketToHost() {
+// GCC 14.2's predictive commoning pass crashes on this during LTO (internal compiler error), whether it's inlined into
+// its callers or not
+[[gnu::noinline, gnu::optimize("no-predictive-commoning")]] void writePacketToHost() {
 	uint16_t fifoCtr = USB200.D0FIFOCTR;
 	if (!(fifoCtr & USB_FRDY)) {
 		toHostFifoNotReady = toHostFifoNotReady + 1;
 		return;
 	}
 
-	uint32_t codecFrame = codecFramePosition();
-	int32_t codecFramesElapsed = (codecFrame - toHostLastCodecFrame) & (SSI_TX_BUFFER_NUM_SAMPLES - 1);
-	toHostLastCodecFrame = codecFrame;
-	size_t numFrames = toHostSizer.nextPacketFrames(codecFramesElapsed);
+	size_t numFrames = toHostSizer.nextPacketFrames();
 
 	size_t got = 0;
-	if (!toHostPrimed && toHostRing.size() >= kToHostPrefillFrames) {
-		toHostPrimed = true;
+	bool primed = toHostPrimed.load(std::memory_order_relaxed);
+	if (!primed && toHostRing.size() >= kToHostPrimeFrames) {
+		primed = true;
 	}
-	if (toHostPrimed) {
+	if (primed) {
 		size_t skip = framesToSkipForLatency<kToHostTargetFrames, kToHostSlackFrames>(toHostRing.size());
 		toHostRing.discard(skip);
 		toHostDroppedFrames = toHostDroppedFrames + skip;
@@ -116,9 +118,10 @@ uint32_t codecFramePosition() {
 		if (got < numFrames) {
 			// Ran dry - start again from silence until there's enough queued up
 			toHostUnderruns = toHostUnderruns + 1;
-			toHostPrimed = false;
+			primed = false;
 		}
 	}
+	toHostPrimed.store(primed, std::memory_order_relaxed);
 	std::fill(&toHostFrames[got], &toHostFrames[numFrames], Frame{0, 0});
 
 	size_t numBytes = packFrames24(std::span{toHostFrames, numFrames}, toHostPacket);
@@ -142,11 +145,14 @@ void toHostPipeISR(uint16_t pipe, uint16_t event) {
 void startStreamToHost() {
 	constexpr uint16_t pipe = USB_CFG_PAUDIO_ISO_TO_HOST;
 
-	// Nothing's being pushed or popped yet, so the ring can be reset safely
+	// Nothing's being pushed or popped yet - the ISR isn't involved, and the audio routine can't run while this does
+	toHostCodecRing.clear();
+	toHostResampler.reset();
+	toHostResampler.setIncrement(DriftResampler::kUnity);
+	toHostServoRunning = false;
 	toHostRing.clear();
 	toHostSizer.reset();
 	toHostPrimed = false;
-	toHostLastCodecFrame = codecFramePosition();
 
 	// Give the pipe the D0FIFO port, for CPU access (no DMA)
 	USB200.D0FIFOSEL = USB_MBW_16 | pipe;
@@ -428,7 +434,12 @@ void processInputFromHost() {
 		return;
 	}
 
-	uint32_t capturedUpTo = codecInputFramePosition();
+	// The DMA's last few writes before the position it reports can still be on their way to memory - if we replaced
+	// those frames now, the codec's input would land on top afterwards. So stay a few frames back, as the audio
+	// engine's own read position does (see AudioEngine::init()). Everything reads from 128+ frames further back
+	// still, so it all gets processed in time.
+	constexpr uint32_t kDmaSettleFrames = 8;
+	uint32_t capturedUpTo = (codecInputFramePosition() - kDmaSettleFrames) & (SSI_RX_BUFFER_NUM_SAMPLES - 1);
 	if (!processingInput) {
 		// Just switched on. Start from here - anything before was captured as plain line in.
 		processingInput = true;
@@ -466,8 +477,32 @@ void feedOutputToHost(std::span<const StereoSample> frames) {
 	if (!streamingToHost.load(std::memory_order_acquire)) {
 		return;
 	}
-	size_t pushed = toHostRing.push({reinterpret_cast<const Frame*>(frames.data()), frames.size()});
+	size_t pushed = toHostCodecRing.push({reinterpret_cast<const Frame*>(frames.data()), frames.size()});
 	toHostDroppedFrames = toHostDroppedFrames + (frames.size() - pushed);
+
+	// Only steer while the ISR is taking frames. Before that, toHostRing just fills up to where it starts.
+	bool primed = toHostPrimed.load(std::memory_order_relaxed);
+	if (primed && !toHostServoRunning) {
+		toHostServo.reset(toHostRing.size(), false);
+	}
+	toHostServoRunning = primed;
+
+	Frame resampled[SSI_TX_BUFFER_NUM_SAMPLES];
+	size_t numResampled = 0;
+	while (true) {
+		size_t numFrames = std::min(
+		    {toHostResampler.framesAvailable(toHostCodecRing.size()), toHostRing.space(), std::size(resampled)});
+		if (numFrames == 0) {
+			break;
+		}
+		toHostResampler.render({resampled, numFrames}, toHostCodecRing);
+		toHostRing.push({resampled, numFrames});
+		numResampled += numFrames;
+	}
+
+	if (toHostServoRunning) {
+		toHostResampler.setIncrement(toHostServo.update(toHostRing.size(), numResampled));
+	}
 }
 
 } // namespace deluge::io::usb::audio

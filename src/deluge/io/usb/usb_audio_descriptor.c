@@ -24,8 +24,8 @@
 #include "deluge/io/midi/r_usb_pmidi_descriptor.h"
 
 // Differs from the MIDI-only configuration's, so hosts that cache descriptors per VID/PID/bcdDevice (Windows) don't
-// mix the two configurations up.
-#define USB_AUDIO_RELEASE (0x0201u)
+// mix the two configurations up. Bump it whenever the audio descriptors change, for the same reason.
+#define USB_AUDIO_RELEASE (0x0202u)
 
 #define LO(x) (uint8_t)((x) & 0xFF)
 #define HI(x) (uint8_t)(((x) >> 8) & 0xFF)
@@ -52,7 +52,7 @@
 
 #define CHANNEL_CONFIG_STEREO 0x00000003 // Front left, front right
 
-#define EP_ATTR_ISO_ASYNC 0x05    // Isochronous, asynchronous, data
+#define EP_ATTR_ISO_SYNC 0x0D     // Isochronous, synchronous, data
 #define EP_ATTR_ISO_ADAPTIVE 0x09 // Isochronous, adaptive, data
 
 // Lengths
@@ -227,7 +227,7 @@ uint8_t g_audio_configuration[AUDIO_CONFIG_TOTAL_LENGTH + (AUDIO_CONFIG_TOTAL_LE
                               (uint8_t)(USB_EP_OUT | USB_AUDIO_EP_FROM_HOST), EP_ATTR_ISO_ADAPTIVE),
 
     AUDIO_STREAMING_INTERFACE(USB_AUDIO_IF_STREAM_TO_HOST, USB_AUDIO_ID_TO_HOST_USB_OT,
-                              (uint8_t)(USB_EP_IN | USB_AUDIO_EP_TO_HOST), EP_ATTR_ISO_ASYNC),
+                              (uint8_t)(USB_EP_IN | USB_AUDIO_EP_TO_HOST), EP_ATTR_ISO_SYNC),
 
     USB_MIDI_INTERFACE_DESCRIPTORS(USB_AUDIO_IF_MIDI),
 };

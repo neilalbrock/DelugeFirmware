@@ -26,12 +26,15 @@
 //                  computer -> Deluge: USB streaming IT -> line OT
 //                  Deluge -> computer: line IT -> USB streaming OT
 //   Interface 1: AudioStreaming, computer -> Deluge. Alt 0 idle, alt 1 stereo 24-bit, ISO OUT, adaptive
-//   Interface 2: AudioStreaming, Deluge -> computer. Alt 0 idle, alt 1 stereo 24-bit, ISO IN, asynchronous
+//   Interface 2: AudioStreaming, Deluge -> computer. Alt 0 idle, alt 1 stereo 24-bit, ISO IN, synchronous
 //   Interface 3: MIDIStreaming - identical to the MIDI-only configuration
 //
 // Only PIPE1 and PIPE2 can be isochronous, so there is no room for an explicit feedback endpoint. Windows doesn't
 // support implicit feedback, so the OUT stream is adaptive (the computer sends at its own rate and the Deluge
-// resamples). The IN stream is asynchronous - the Deluge's codec clock is the master.
+// resamples). The IN stream is synchronous - locked to USB's 1ms frames, with the Deluge resampling from its codec's
+// clock - so that both streams run on the computer's clock. With the IN stream on the codec's clock instead, macOS
+// ends up feeding the OUT stream from a buffer clocked by one stream and drained at the rate of the other, and after a
+// few minutes it starts running dry.
 
 #define USB_AUDIO_SAMPLE_RATE 44100
 #define USB_AUDIO_NUM_CHANNELS 2

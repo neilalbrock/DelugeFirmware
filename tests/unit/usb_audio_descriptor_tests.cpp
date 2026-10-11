@@ -152,11 +152,14 @@ TEST(UsbAudioDescriptorTests, pipeTableRowsMatchEndpoints) {
 			CHECK(maxPacketSize <= 1023); // Full speed limit
 		}
 
+		// Both streams run on the computer's clock: OUT adaptive, IN synchronous (bits 3:2 of bmAttributes)
 		if (address == (USB_EP_OUT | USB_AUDIO_EP_FROM_HOST)) {
 			CHECK_EQUAL(USB_CFG_PAUDIO_ISO_FROM_HOST, pipe);
+			CHECK_EQUAL(0x09, ep[3]);
 		}
 		else if (address == (USB_EP_IN | USB_AUDIO_EP_TO_HOST)) {
 			CHECK_EQUAL(USB_CFG_PAUDIO_ISO_TO_HOST, pipe);
+			CHECK_EQUAL(0x0D, ep[3]);
 		}
 		else if (address == (USB_EP_OUT | USB_EP2)) {
 			CHECK_EQUAL(USB_CFG_PMIDI_BULK_IN, pipe);

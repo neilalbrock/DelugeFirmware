@@ -95,33 +95,28 @@ private:
 	std::atomic<size_t> readIndex_{0};
 };
 
-// Decides how many frames go in each packet to the computer, so that on average they go at exactly the rate the
-// codec's clock is producing them. Each packet carries the frames the codec has played since the last one -
-// normally 44 or 45 - with any fraction carried over to the next. Packet sizes are kept within one frame of the
-// nominal 44.1, as Windows requires (FMT-2 2.3.1.1).
+// Decides how many frames go in each packet to the computer. The stream is synchronous - locked to USB's 1ms frames -
+// so this is a fixed pattern averaging 44.1: nine packets of 44, then one of 45. That's within one frame of the
+// nominal size, as Windows requires (FMT-2 2.3.1.1).
 class PacketSizer {
+	static_assert(USB_AUDIO_SAMPLE_RATE % 100 == 0, "the pattern repeats every 10 packets");
+	static constexpr int32_t kPacketsPerCycle = 10;
+	static constexpr int32_t kFramesPerCycle = USB_AUDIO_SAMPLE_RATE / 100;
+
 public:
-	static constexpr int32_t kMinFrames = 44;
-	static constexpr int32_t kMaxFrames = 45;
-	// Normally only a fraction of a frame is carried over, plus a frame or so of jitter in when packets are taken
-	static constexpr int32_t kMaxCarry = 2;
+	static constexpr int32_t kMaxFrames = kFramesPerCycle / kPacketsPerCycle + 1;
 
-	void reset() { owed_ = 0; }
+	void reset() { remainder_ = 0; }
 
-	// codecFramesElapsed: frames the codec has played since the previous call
-	int32_t nextPacketFrames(int32_t codecFramesElapsed) {
-		owed_ += codecFramesElapsed;
-		int32_t frames = std::clamp(owed_, kMinFrames, kMaxFrames);
-		owed_ -= frames;
-		// If the computer skipped some frames, or we were held up, there's more owed than can be caught up on within
-		// the limits without sending maximum-size packets for ages. Forget it - any frames that build up in the ring
-		// as a result get skipped by framesToSkipForLatency().
-		owed_ = std::clamp(owed_, -kMaxCarry, kMaxCarry);
+	int32_t nextPacketFrames() {
+		remainder_ += kFramesPerCycle;
+		int32_t frames = remainder_ / kPacketsPerCycle;
+		remainder_ -= frames * kPacketsPerCycle;
 		return frames;
 	}
 
 private:
-	int32_t owed_ = 0;
+	int32_t remainder_ = 0;
 };
 
 // Packs frames as the 3-byte little-endian samples the computer expects. Samples are 32-bit with the 24 meaningful
@@ -168,11 +163,12 @@ inline size_t unpackFrames24(const uint8_t* src, size_t numBytes, Frame* dest, s
 }
 
 /*********************************************************************************************************************
- * Computer -> Deluge
+ * Clock drift
  *
- * The computer sends at its own clock's rate (adaptive), which drifts against the codec's crystal by up to a few
- * hundred ppm. DriftResampler converts to the codec's rate, and RateServo steers its ratio so that the ring holding
- * the computer's audio stays at a steady fill level - which only happens when the ratio matches the drift.
+ * Both streams run on the computer's clock, which drifts against the codec's crystal by up to a few hundred ppm.
+ * DriftResampler converts between the two, and RateServo steers its ratio so that the ring on the computer's side
+ * stays at a steady fill level - which only happens when the ratio matches the drift. Computer -> Deluge resamples
+ * from the computer's clock to the codec's, and Deluge -> computer the other way.
  *********************************************************************************************************************/
 
 // Resamples by a ratio very close to 1, with 4-point cubic (Catmull-Rom) interpolation.
@@ -187,6 +183,16 @@ public:
 
 	// Source frames to advance per output frame, as a 32.32 fixed-point number
 	void setIncrement(uint64_t increment) { increment_ = increment; }
+
+	// How many frames render() can produce from numSourceFrames more source frames, without running dry
+	size_t framesAvailable(size_t numSourceFrames) const {
+		// Output frame k takes the source up to frame (phase_ + k * increment_) >> 32, which must be one we'll have
+		uint64_t limit = (uint64_t{numSourceFrames} + 1) * kUnity;
+		if (phase_ >= limit) {
+			return 0;
+		}
+		return static_cast<size_t>((limit - phase_ - 1) / increment_ + 1);
+	}
 
 	// Fills out, taking source frames from the ring as needed. Returns false if the ring ran dry, in which case
 	// silence was used in place of the missing frames.
@@ -234,8 +240,9 @@ private:
 	uint64_t increment_ = kUnity;
 };
 
-// Proportional-integral control of the resampling ratio from the ring's fill level. The fill level is smoothed first,
-// as packets arrive every 1ms but the audio routine takes frames in blocks of up to SSI_TX_BUFFER_NUM_SAMPLES.
+// Proportional-integral control of the resampling ratio from the fill level of the ring on the computer's side. The
+// fill level is smoothed first, as the USB side moves a packet every 1ms but the audio routine moves blocks of up to
+// SSI_TX_BUFFER_NUM_SAMPLES.
 class RateServo {
 public:
 	static constexpr float kSampleRate = USB_AUDIO_SAMPLE_RATE;
@@ -260,7 +267,7 @@ public:
 		float weight = std::min(1.f, framesRendered / (kFillSmoothingSeconds * kSampleRate));
 		smoothedFill_ += (static_cast<float>(fill) - smoothedFill_) * weight;
 
-		float error = smoothedFill_ - targetFill_; // More queued than wanted: consume faster
+		float error = smoothedFill_ - targetFill_; // More queued than wanted: take more source frames per output frame
 		integralPpm_ += error * kProportionalPpmPerFrame * framesRendered / (kIntegralSeconds * kSampleRate);
 		integralPpm_ = std::clamp(integralPpm_, -kMaxCorrectionPpm, kMaxCorrectionPpm);
 

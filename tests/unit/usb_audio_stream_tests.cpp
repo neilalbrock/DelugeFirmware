@@ -71,66 +71,26 @@ TEST(UsbAudioFrameRingTests, discardSkipsOldestFrames) {
 TEST_GROUP(UsbAudioPacketSizerTests){};
 
 namespace {
-// Frames the codec has played by time t ms, at 44.1kHz
+// Frames due by time t ms, at 44.1kHz
 int32_t codecFramesAt(int64_t ms) {
 	return static_cast<int32_t>(ms * 44100 / 1000);
 }
 } // namespace
 
-TEST(UsbAudioPacketSizerTests, tracksTheCodecExactly) {
+TEST(UsbAudioPacketSizerTests, sendsExactlyTheNominalRate) {
 	PacketSizer sizer;
 	int64_t sent = 0;
 	for (int64_t ms = 1; ms <= 10000; ms++) {
-		int32_t frames = sizer.nextPacketFrames(codecFramesAt(ms) - codecFramesAt(ms - 1));
+		int32_t frames = sizer.nextPacketFrames();
 		CHECK(frames == 44 || frames == 45);
+		CHECK(frames <= PacketSizer::kMaxFrames);
 		sent += frames;
-		// Never more than a frame adrift of the codec
+		// Never a frame adrift of 44.1 per ms, and exact every 10 packets
 		CHECK(std::abs(sent - codecFramesAt(ms)) <= 1);
-	}
-}
-
-TEST(UsbAudioPacketSizerTests, followsAFastOrSlowCodecClock) {
-	for (int64_t ppm : {-200, 200}) {
-		PacketSizer sizer;
-		int64_t sent = 0;
-		int64_t played = 0;
-		for (int64_t ms = 1; ms <= 20000; ms++) {
-			int64_t nowPlayed = ms * 44100 * (1000000 + ppm) / 1000000000;
-			int32_t frames = sizer.nextPacketFrames(static_cast<int32_t>(nowPlayed - played));
-			played = nowPlayed;
-			CHECK(frames == 44 || frames == 45);
-			sent += frames;
+		if (ms % 10 == 0) {
+			CHECK_EQUAL(codecFramesAt(ms), sent);
 		}
-		CHECK(std::abs(sent - played) <= 1);
 	}
-}
-
-TEST(UsbAudioPacketSizerTests, absorbsJitterInWhenPacketsAreTaken) {
-	// The ISR doesn't run exactly on the 1ms boundary, so the frames counted between packets wobble
-	PacketSizer sizer;
-	int64_t sent = 0;
-	int64_t played = 0;
-	for (int64_t ms = 1; ms <= 10000; ms++) {
-		int64_t jitter = (ms % 3) - 1; // -1, 0 or +1 frame
-		int64_t nowPlayed = codecFramesAt(ms) + jitter;
-		int32_t frames = sizer.nextPacketFrames(static_cast<int32_t>(nowPlayed - played));
-		played = nowPlayed;
-		CHECK(frames == 44 || frames == 45);
-		sent += frames;
-	}
-	CHECK(std::abs(sent - played) <= 2);
-}
-
-TEST(UsbAudioPacketSizerTests, dropsBacklogAfterAMissedPacket) {
-	PacketSizer sizer;
-	sizer.nextPacketFrames(44);
-	CHECK_EQUAL(45, sizer.nextPacketFrames(88 * 3)); // Held up for a few ms
-	// Back to normal straight away, rather than sending 45s for ages to catch up
-	int32_t fortyFives = 0;
-	for (int i = 0; i < 20; i++) {
-		fortyFives += (sizer.nextPacketFrames(44) == 45);
-	}
-	CHECK(fortyFives <= PacketSizer::kMaxCarry);
 }
 
 TEST_GROUP(UsbAudioPackingTests){};
@@ -253,6 +213,24 @@ TEST(UsbAudioResamplerTests, reportsRunningDry) {
 	CHECK_FALSE(resampler.render(out, ring));
 }
 
+TEST(UsbAudioResamplerTests, knowsHowManyFramesItCanProduce) {
+	for (double ratio : {0.5, 0.9997, 1.0, 1.0003, 1.7}) {
+		DriftResampler resampler;
+		resampler.setIncrement(static_cast<uint64_t>(DriftResampler::kUnity * ratio));
+		FrameRing<512> ring;
+		for (int block = 0; block < 20; block++) {
+			pushRamp(ring, block * 37, 37); // Odd-sized blocks, so the phase lands all over the place
+			size_t available = resampler.framesAvailable(ring.size());
+			std::vector<Frame> out(available);
+			CHECK(resampler.render(out, ring));
+			CHECK_EQUAL(0, resampler.framesAvailable(ring.size()));
+		}
+		// One more would have needed a frame that isn't there
+		Frame extra[1];
+		CHECK_FALSE(resampler.render(extra, ring));
+	}
+}
+
 TEST_GROUP(UsbAudioRateServoTests){};
 
 namespace {
@@ -261,6 +239,7 @@ struct ServoRun {
 	size_t minFill = SIZE_MAX;
 	size_t maxFill = 0;
 	float finalCorrectionPpm = 0;
+	double meanCorrectionPpm = 0; // Over the settled half
 };
 
 // Simulates the computer sending 1ms packets on its own clock while the audio routine takes frames in blocks on the
@@ -326,5 +305,97 @@ TEST(UsbAudioRateServoTests, locksOntoClockDrift) {
 		CHECK(run.maxFill < 320 + 200);
 		// And the servo has learned the drift
 		CHECK(std::abs(run.finalCorrectionPpm - drift) < 25);
+	}
+}
+
+namespace {
+// Simulates Deluge -> computer: the audio routine adds blocks on the codec's clock, which are resampled into the ring
+// the ISR takes fixed-size packets from on the computer's clock - as in feedOutputToHost() and writePacketToHost()
+ServoRun simulateToHost(double hostDriftPpm, int seconds) {
+	constexpr size_t kTarget = 224;
+	constexpr size_t kPrime = kTarget - 64;
+	FrameRing<256> codecRing;
+	FrameRing<512> ring;
+	DriftResampler resampler;
+	RateServo servo(kTarget);
+	PacketSizer sizer;
+	ServoRun run;
+
+	bool primed = false;
+	bool servoRunning = false;
+	double codecFramesOwed = 0;
+	double hostPacketsOwed = 0;
+	std::vector<Frame> block(256);
+	std::vector<Frame> resampled(128);
+	Frame packet[PacketSizer::kMaxFrames];
+	unsigned blockPattern = 0;
+	double correctionSum = 0;
+	int numCorrections = 0;
+
+	for (int ms = 0; ms < seconds * 1000; ms++) {
+		// The audio routine runs every 1-3ms of the codec's clock, adding what the codec has used since last time
+		codecFramesOwed += 44.1;
+		if (++blockPattern % (1 + (ms % 3)) == 0) {
+			size_t blockFrames = static_cast<size_t>(codecFramesOwed);
+			codecFramesOwed -= blockFrames;
+			codecRing.push({block.data(), blockFrames});
+
+			if (primed && !servoRunning) {
+				servo.reset(ring.size(), false);
+			}
+			servoRunning = primed;
+			size_t numResampled = 0;
+			while (true) {
+				size_t n = std::min({resampler.framesAvailable(codecRing.size()), ring.space(), resampled.size()});
+				if (n == 0) {
+					break;
+				}
+				resampler.render({resampled.data(), n}, codecRing);
+				ring.push({resampled.data(), n});
+				numResampled += n;
+			}
+			if (servoRunning) {
+				resampler.setIncrement(servo.update(ring.size(), numResampled));
+			}
+			if (ms > seconds * 1000 / 2) {
+				correctionSum += servo.correctionPpm();
+				numCorrections++;
+			}
+		}
+
+		// One packet per ms of the computer's clock
+		hostPacketsOwed += 1 + hostDriftPpm * 1e-6;
+		while (hostPacketsOwed >= 1) {
+			hostPacketsOwed -= 1;
+			size_t numFrames = sizer.nextPacketFrames();
+			if (!primed && ring.size() >= kPrime) {
+				primed = true;
+			}
+			if (primed && ring.pop({packet, numFrames}) < numFrames) {
+				run.underruns++;
+				primed = false;
+			}
+		}
+
+		if (ms > seconds * 1000 / 2) { // After settling
+			run.minFill = std::min(run.minFill, ring.size());
+			run.maxFill = std::max(run.maxFill, ring.size());
+		}
+	}
+	run.finalCorrectionPpm = servo.correctionPpm();
+	run.meanCorrectionPpm = correctionSum / numCorrections;
+	return run;
+}
+} // namespace
+
+TEST(UsbAudioRateServoTests, locksTheOutputOntoTheComputersClock) {
+	for (double drift : {-500.0, -200.0, 0.0, 200.0, 500.0}) {
+		ServoRun run = simulateToHost(drift, 60);
+		CHECK_EQUAL(0, run.underruns);
+		CHECK(run.minFill > 0);
+		CHECK(run.maxFill < 224 + 192); // Never enough to trigger skipping
+		// A faster computer needs more output frames per codec frame, so fewer source frames per output. Fill is
+		// measured just after bursty blocks are added, so the ratio jitters a little around that.
+		CHECK(std::abs(run.meanCorrectionPpm + drift) < 25);
 	}
 }
