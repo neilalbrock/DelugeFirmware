@@ -108,8 +108,13 @@ static void usb_pstd_interrupt(uint16_t type, uint16_t status)
             usb_pstd_brdy_pipe(status);
             break;
 
+        // Pipes other than MIDI's are serviced in the ISR (see usb_pstd_set_isr_pipe_handler()), so only MIDI's
+        // bits get this far. Any other stray bits are ignored.
         case USB_INT_BRDY: // BRDY (receive finished arriving) for non-0 pipe
-            usb_pstd_brdy_pipe_process_rohan_midi(status);
+            if (status & USB_BITSET(USB_CFG_PMIDI_BULK_IN))
+            {
+                usb_pstd_brdy_pipe_process_rohan_midi(status);
+            }
             break;
 
         case USB_INT_BEMP0: // BEMP (send finished) for pipe0
@@ -117,7 +122,10 @@ static void usb_pstd_interrupt(uint16_t type, uint16_t status)
             break;
 
         case USB_INT_BEMP: // BEMP (send finished) for non-0 pipe
-            usb_pstd_bemp_pipe_process_rohan_midi(status);
+            if (status & USB_BITSET(USB_CFG_PMIDI_BULK_OUT))
+            {
+                usb_pstd_bemp_pipe_process_rohan_midi(status);
+            }
             break;
 
         // NRDY interrupts don't need processing (I filter them out during the interrupt) unless we use ISO endpoints.
@@ -620,6 +628,118 @@ void usb_pstd_set_eptbl_index(uint16_t con_num, uint16_t int_num, uint16_t alt_n
         }
     }
 } /* End of function usb_pstd_set_eptbl_index() */
+
+#define USB_ALT_ANY (0xFFFFu)
+
+typedef void (*usb_pstd_ep_visitor_t)(uint16_t dir, uint16_t ep);
+
+// Calls visit() for each endpoint descriptor in the current configuration which belongs to interface int_num, in
+// alternate setting alt_num, or in any of its alternate settings if alt_num is USB_ALT_ANY.
+static void usb_pstd_visit_interface_eps(uint16_t int_num, uint16_t alt_num, usb_pstd_ep_visitor_t visit)
+{
+    uint8_t* config        = g_usb_pstd_driver.p_configtbl;
+    uint16_t length        = (uint16_t)(config[2] | ((uint16_t)config[3] << 8));
+    uint16_t in_wanted_alt = USB_FALSE;
+
+    for (uint16_t i = config[0]; i < length; i += config[i])
+    {
+        uint8_t* desc = &config[i];
+        if (0 == desc[0])
+        {
+            break; // Malformed - would loop forever
+        }
+
+        if (USB_DT_INTERFACE == desc[1])
+        {
+            in_wanted_alt = (desc[2] == int_num) && ((USB_ALT_ANY == alt_num) || (desc[3] == alt_num));
+        }
+        else if ((USB_DT_ENDPOINT == desc[1]) && in_wanted_alt)
+        {
+            uint16_t dir = ((desc[2] & USB_EP_DIRMASK) == USB_EP_IN) ? 1 : 0;
+            visit(dir, (uint16_t)(desc[2] & USB_EP_NUMMASK));
+        }
+    }
+}
+
+static void usb_pstd_unconfigure_ep(uint16_t dir, uint16_t ep)
+{
+    uint16_t index = g_usb_pstd_eptbl_index[dir][ep];
+    if (USB_ERROR == index)
+    {
+        return;
+    }
+
+    uint16_t pipe = (uint16_t)(g_usb_pstd_driver.p_pipetbl[USB_EPL * index] & USB_CURPIPE);
+    usb_cstd_clr_pipe_cnfg(USB_NULL, pipe);
+    g_usb_pstd_eptbl_index[dir][ep] = USB_ERROR;
+}
+
+static void usb_pstd_configure_ep(uint16_t dir, uint16_t ep)
+{
+    uint16_t index = g_usb_pstd_eptbl_index[dir][ep];
+    if (USB_ERROR == index)
+    {
+        return;
+    }
+
+    uint16_t* tbl = g_usb_pstd_driver.p_pipetbl;
+    uint16_t ofs  = (uint16_t)(USB_EPL * index);
+
+    /* Current FIFO port Clear */
+    usb_cstd_chg_curpipe(USB_NULL, (uint16_t)USB_PIPE0, (uint16_t)USB_CUSE, USB_FALSE);
+    usb_cstd_pipe_init(USB_NULL, (uint16_t)(tbl[ofs] & USB_CURPIPE), tbl, ofs);
+}
+
+// Resets the data toggle without otherwise disturbing the pipe, as CLEAR_FEATURE(ENDPOINT_HALT) does
+static void usb_pstd_reset_ep_toggle(uint16_t dir, uint16_t ep)
+{
+    uint16_t index = g_usb_pstd_eptbl_index[dir][ep];
+    if (USB_ERROR == index)
+    {
+        return;
+    }
+
+    uint16_t pipe = (uint16_t)(g_usb_pstd_driver.p_pipetbl[USB_EPL * index] & USB_CURPIPE);
+    if (USB_PID_BUF == usb_cstd_get_pid(USB_NULL, pipe))
+    {
+        usb_cstd_set_nak(USB_NULL, pipe);
+        hw_usb_set_sqclr(USB_NULL, pipe);
+        usb_cstd_set_buf(USB_NULL, pipe);
+    }
+    else
+    {
+        usb_cstd_clr_stall(USB_NULL, pipe);
+        hw_usb_set_sqclr(USB_NULL, pipe);
+    }
+}
+
+/***********************************************************************************************************************
+ Function Name   : usb_pstd_set_interface_alt
+ Description     : Switch one interface to a new alternate setting, unconfiguring the pipes of whichever
+                 : of its alternate settings was in use and configuring the pipes of the new one. Pipes
+                 : belonging to other interfaces are left alone, so e.g. MIDI carries on undisturbed while
+                 : an audio stream starts or stops.
+ Arguments       : uint16_t     int_num      : Interface Number.
+                 : uint16_t     alt_num      : Alternate Setting.
+ Return value    : none
+ ***********************************************************************************************************************/
+void usb_pstd_set_interface_alt(uint16_t int_num, uint16_t alt_num)
+{
+    if (alt_num == g_usb_pstd_alt_num[int_num])
+    {
+        // Re-selecting the current alternate setting only needs the data toggles reset. Fully re-initialising the
+        // pipes would drop transfers that are already armed - like MIDI's receive - which nothing would re-arm.
+        // (Until SET_INTERFACE was fixed it always stalled, and hosts fell back to CLEAR_FEATURE(ENDPOINT_HALT),
+        // which does the same as this.)
+        usb_pstd_visit_interface_eps(int_num, alt_num, &usb_pstd_reset_ep_toggle);
+        return;
+    }
+
+    g_usb_pstd_alt_num[int_num] = alt_num;
+    usb_pstd_visit_interface_eps(int_num, USB_ALT_ANY, &usb_pstd_unconfigure_ep);
+    usb_pstd_set_eptbl_index(g_usb_pstd_config_num, int_num, alt_num);
+    usb_pstd_visit_interface_eps(int_num, alt_num, &usb_pstd_configure_ep);
+} /* End of function usb_pstd_set_interface_alt() */
 
 /***********************************************************************************************************************
  Function Name   : usb_pstd_chk_remote

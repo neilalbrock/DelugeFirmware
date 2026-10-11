@@ -1186,24 +1186,18 @@ static void usb_pstd_set_interface0(void)
  ***********************************************************************************************************************/
 static void usb_pstd_set_interface3(void)
 {
-    uint16_t* p_table;
-
     /* Configured ? */
-    if ((USB_TRUE == usb_pstd_chk_configured()) && ((USB_INTERFACE == g_usb_pstd_req_type & USB_BMREQUESTTYPERECIP)))
+    // g_usb_pstd_req_type is all of USBREQ (bRequest in the high byte), so it must be masked before comparing. This
+    // used to read (USB_INTERFACE == g_usb_pstd_req_type & ...), which never matched, so SET_INTERFACE always stalled.
+    if ((USB_TRUE == usb_pstd_chk_configured()) && (USB_INTERFACE == (g_usb_pstd_req_type & USB_BMREQUESTTYPERECIP)))
     {
-        if ((g_usb_pstd_req_index <= usb_pstd_get_interface_num(g_usb_pstd_config_num)) && (0 == g_usb_pstd_req_length))
+        if ((g_usb_pstd_req_index < usb_pstd_get_interface_num(g_usb_pstd_config_num)) && (0 == g_usb_pstd_req_length))
         {
             if (g_usb_pstd_req_value <= usb_pstd_get_alternate_num(g_usb_pstd_config_num, g_usb_pstd_req_index))
             {
-                g_usb_pstd_alt_num[g_usb_pstd_req_index] = (uint16_t)(g_usb_pstd_req_value & USB_ALT_SET);
                 usb_cstd_set_buf(USB_NULL, (uint16_t)USB_PIPE0);
-                usb_pstd_clr_eptbl_index();
-                /* Search endpoint setting */
-                usb_pstd_set_eptbl_index(
-                    g_usb_pstd_config_num, g_usb_pstd_req_index, g_usb_pstd_alt_num[g_usb_pstd_req_index]);
-                p_table = g_usb_pstd_driver.p_pipetbl;
-                /* Set pipe configuration register */
-                usb_pstd_set_pipe_register((uint16_t)USB_PERIPIPE, p_table);
+                /* Reconfigure just this interface's endpoints (and record its new alternate setting) */
+                usb_pstd_set_interface_alt(g_usb_pstd_req_index, (uint16_t)(g_usb_pstd_req_value & USB_ALT_SET));
             }
             else
             {

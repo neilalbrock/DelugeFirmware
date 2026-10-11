@@ -17,6 +17,7 @@
 
 #pragma once
 
-// Let's just keep these two pipes as not the same as the send-pipe for USB MIDI hosting (PIPE1)
-#define USB_CFG_PMIDI_BULK_IN (USB_PIPE2)
-#define USB_CFG_PMIDI_BULK_OUT (USB_PIPE3)
+// PIPE1 and PIPE2 are the only pipes the hardware allows to be isochronous, so peripheral MIDI stays off them to
+// leave them free for USB audio. (They're also not the send-pipe for USB MIDI hosting, PIPE1.)
+#define USB_CFG_PMIDI_BULK_IN (USB_PIPE3)
+#define USB_CFG_PMIDI_BULK_OUT (USB_PIPE4)

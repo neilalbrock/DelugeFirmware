@@ -483,6 +483,7 @@ void usb_pstd_clr_eptbl_index(void);
 uint16_t usb_pstd_get_interface_num(uint16_t con_num);
 uint16_t usb_pstd_get_alternate_num(uint16_t con_num, uint16_t int_num);
 void usb_pstd_set_eptbl_index(uint16_t con_num, uint16_t int_num, uint16_t alt_num);
+void usb_pstd_set_interface_alt(uint16_t int_num, uint16_t alt_num);
 uint16_t usb_pstd_chk_remote(void);
 uint8_t usb_pstd_get_current_power(void);
 void usb_pstd_set_pipe_register(uint16_t pipeno, uint16_t* tbl);
@@ -507,6 +508,10 @@ void usb_p_registration(usb_ctrl_t* ctrl, usb_cfg_t* cfg);
 void usb_pdriver_init(usb_ctrl_t* ctrl, usb_cfg_t* cfg);
 
 /* r_usb_preg_abs.c */
+// Handler for a pipe serviced directly in the USB ISR rather than via the PCD task. event is USB_INT_BRDY,
+// USB_INT_BEMP or USB_INT_NRDY. Runs in interrupt context, so must be quick.
+typedef void (*usb_pstd_isr_pipe_handler_t)(uint16_t pipe, uint16_t event);
+void usb_pstd_set_isr_pipe_handler(uint16_t pipe, usb_pstd_isr_pipe_handler_t handler);
 int usb_pstd_interrupt_handler(uint16_t* type, uint16_t* status);
 void usb_pstd_save_request(void);
 uint16_t usb_pstd_chk_configured(void);

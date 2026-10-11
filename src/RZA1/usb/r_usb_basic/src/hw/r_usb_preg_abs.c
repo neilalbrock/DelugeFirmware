@@ -45,6 +45,53 @@ uint16_t g_usb_cstd_suspend_mode = USB_NORMAL_MODE;
 
 extern uint32_t timeLastBRDY[];
 
+// Pipes whose BRDY/BEMP/NRDY are dealt with right here in the ISR (e.g. isochronous audio, which can't wait for the
+// PCD task), rather than being queued up for usb_pstd_pcd_task().
+static usb_pstd_isr_pipe_handler_t g_usb_pstd_isr_pipe_handler[USB_MAX_PIPE_NO + 1u];
+static volatile uint16_t g_usb_pstd_isr_pipe_mask; // One bit per pipe that has a handler above
+
+void usb_pstd_set_isr_pipe_handler(uint16_t pipe, usb_pstd_isr_pipe_handler_t handler)
+{
+    if ((pipe < USB_MIN_PIPE_NO) || (pipe > USB_MAX_PIPE_NO))
+    {
+        return;
+    }
+
+    // Ordered so the ISR never sees a pipe's mask bit without its handler being there
+    if (handler != USB_NULL)
+    {
+        g_usb_pstd_isr_pipe_handler[pipe] = handler;
+        g_usb_pstd_isr_pipe_mask |= USB_BITSET(pipe);
+    }
+    else
+    {
+        g_usb_pstd_isr_pipe_mask &= (uint16_t)~USB_BITSET(pipe);
+        g_usb_pstd_isr_pipe_handler[pipe] = USB_NULL;
+    }
+}
+
+// Calls the ISR handler for each pipe in bits that has one. Returns the bits left over for the PCD task.
+static uint16_t usb_pstd_dispatch_isr_pipes(uint16_t bits, uint16_t event)
+{
+    uint16_t mask     = g_usb_pstd_isr_pipe_mask;
+    uint16_t isr_bits = bits & mask;
+
+    for (uint16_t pipe = USB_MIN_PIPE_NO; isr_bits != 0; pipe++)
+    {
+        if (isr_bits & USB_BITSET(pipe))
+        {
+            isr_bits &= (uint16_t)~USB_BITSET(pipe);
+            usb_pstd_isr_pipe_handler_t handler = g_usb_pstd_isr_pipe_handler[pipe];
+            if (handler != USB_NULL)
+            {
+                handler(pipe, event);
+            }
+        }
+    }
+
+    return bits & (uint16_t)~mask;
+}
+
 #if ((USB_CFG_MODE & USB_CFG_PERI) == USB_CFG_PERI)
 /***********************************************************************************************************************
  Function Name   : usb_pstd_interrupt_handler
@@ -126,6 +173,11 @@ int usb_pstd_interrupt_handler(uint16_t* type, uint16_t* status)
 #else  /* USB_CFG_USE_USBIP == USB_CFG_IP1 */
             USB201.BEMPSTS = (uint16_t)~ests;
 #endif /* USB_CFG_USE_USBIP == USB_CFG_IP1 */
+            ests = usb_pstd_dispatch_isr_pipes(ests, USB_INT_BEMP);
+            if (!ests)
+            {
+                return 1; // All dealt with
+            }
             *type   = USB_INT_BEMP;
             *status = ests;
         }
@@ -166,15 +218,22 @@ int usb_pstd_interrupt_handler(uint16_t* type, uint16_t* status)
         {
 
             // brdyOccurred(0); // Records exact time of message receipt
-            timeLastBRDY[0] = DMACnNonVolatile(SSI_TX_DMA_CHANNEL).CRSA_n;
+            uint32_t brdyTime = DMACnNonVolatile(SSI_TX_DMA_CHANNEL).CRSA_n;
 
 #if USB_CFG_USE_USBIP == USB_CFG_IP0
             USB200.BRDYSTS = (uint16_t)~bsts;
 #else  /* USB_CFG_USE_USBIP == USB_CFG_IP1 */
             USB201.BRDYSTS = (uint16_t)~bsts;
 #endif /* USB_CFG_USE_USBIP == USB_CFG_IP1 */
-            *type   = USB_INT_BRDY;
-            *status = bsts;
+            bsts = usb_pstd_dispatch_isr_pipes(bsts, USB_INT_BRDY);
+            if (!bsts)
+            {
+                return 1; // All dealt with
+            }
+            // Only stamped for task-serviced (MIDI) pipes, so ISR-serviced pipes don't disturb MIDI receive timing
+            timeLastBRDY[0] = brdyTime;
+            *type           = USB_INT_BRDY;
+            *status         = bsts;
         }
     }
 
@@ -198,11 +257,13 @@ int usb_pstd_interrupt_handler(uint16_t* type, uint16_t* status)
         // Ok, disregard everything else below - NRDY interrupts never actually need dealing with - unless we have ISO
         // endpoints, which MIDI never does. We'll just clear the interrupt and get out. I've actually disabled NRDY
         // interrupts for my own code, but it seems many other parts of the USB library enable them.
+        // ISO pipes have ISR handlers, which do get told about NRDY (overrun/underrun, missed tokens).
 #if USB_CFG_USE_USBIP == USB_CFG_IP0
         USB200.NRDYSTS = (uint16_t)~nsts;
 #else  /* USB_CFG_USE_USBIP == USB_CFG_IP1 */
         USB201.NRDYSTS = (uint16_t)~nsts;
 #endif /* USB_CFG_USE_USBIP == USB_CFG_IP1 */
+        usb_pstd_dispatch_isr_pipes(nsts, USB_INT_NRDY);
 
         return 1; // All dealt with
 
