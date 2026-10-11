@@ -132,6 +132,28 @@ TEST(Scheduler, scheduleConditionalDoesntRun) {
 	mock().checkExpectations();
 };
 
+// Task IDs are slot indices, so the first task registered gets ID 0 and must be blockable like any other
+TEST(Scheduler, blockTaskZero) {
+	mock().clear();
+	mock().expectNCalls(0, "sleep_50ns");
+	TaskID id = addRepeatingTask(sleep_50ns, 0, 0.001, 0.001, 0.001, "sleep_50ns", RESOURCE_NONE);
+	CHECK_EQUAL(0, id);
+	blockTask(id);
+	taskManager.start(0.0095);
+	mock().checkExpectations();
+};
+
+TEST(Scheduler, blockThenUnblockTaskZero) {
+	mock().clear();
+	mock().expectNCalls(0.01 / 0.001, "sleep_50ns");
+	TaskID id = addRepeatingTask(sleep_50ns, 0, 0.001, 0.001, 0.001, "sleep_50ns", RESOURCE_NONE);
+	CHECK_EQUAL(0, id);
+	blockTask(id);
+	unblockTask(id);
+	taskManager.start(0.0095);
+	mock().checkExpectations();
+};
+
 // The SD card busy-wait yields to the scheduler, so any task holding an SD resource must stay unrunnable for as long
 // as that resource is locked. AudioRecorder::slowRoutine() depends on this: it frees the SampleRecorder, and doing so
 // from inside the card routine leaves SampleRecorder::cardRoutine() running on freed memory.
