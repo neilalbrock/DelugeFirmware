@@ -4,6 +4,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
+#include <random>
 #include <vector>
 
 using namespace deluge::io::usb::audio;
@@ -203,6 +204,58 @@ TEST(UsbAudioResamplerTests, sineSurvivesSlightRatioChange) {
 		worstError = std::max(worstError, std::abs((out[i].l >> 8) - ideal));
 	}
 	CHECK(worstError / kAmplitude < 1e-4); // Better than -80dB
+}
+
+TEST(UsbAudioResamplerTests, matchesExactCatmullRom) {
+	// Random full-scale input, so the curve often overshoots and has to clip, rendered in odd-sized pieces that cross
+	// the resampler's internal chunks
+	std::mt19937 rng(1);
+	std::uniform_int_distribution<int32_t> random24(-(1 << 23), (1 << 23) - 1);
+	for (double ratio : {0.5, 0.9997, 1.0, 1.0003, 1.7}) {
+		std::vector<int32_t> left(3000);
+		std::vector<int32_t> right(3000);
+		FrameRing<4096> ring;
+		for (size_t i = 0; i < left.size(); i++) {
+			left[i] = random24(rng);
+			right[i] = random24(rng);
+			Frame f{left[i] << 8, right[i] << 8};
+			ring.push({&f, 1});
+		}
+
+		DriftResampler resampler;
+		uint64_t increment = static_cast<uint64_t>(DriftResampler::kUnity * ratio);
+		resampler.setIncrement(increment);
+		std::vector<Frame> out(resampler.framesAvailable(ring.size()));
+		size_t done = 0;
+		for (size_t piece : {1, 63, 64, 65, 200, 1, 129}) {
+			piece = std::min(piece, out.size() - done);
+			CHECK(resampler.render({&out[done], piece}, ring));
+			done += piece;
+		}
+		CHECK(resampler.render({&out[done], out.size() - done}, ring));
+
+		// Output k sits at source position k * increment, counting from the 4 frames of silent history
+		auto source = [](const std::vector<int32_t>& samples, uint64_t index) {
+			return index < 4 ? 0.0 : static_cast<double>(samples[index - 4]);
+		};
+		auto expected = [&](const std::vector<int32_t>& samples, uint64_t position) {
+			uint64_t i = position >> 32;
+			double t = static_cast<double>(position & 0xFFFFFFFF) / 4294967296.0;
+			double a = source(samples, i);
+			double b = source(samples, i + 1);
+			double c = source(samples, i + 2);
+			double d = source(samples, i + 3);
+			double y = b + 0.5 * t * ((c - a) + t * ((2 * a - 5 * b + 4 * c - d) + t * (3 * (b - c) + d - a)));
+			return std::clamp(y, -8388608.0, 8388607.75);
+		};
+		double worstError = 0;
+		for (size_t k = 0; k < out.size(); k++) {
+			uint64_t position = k * increment;
+			worstError = std::max(worstError, std::abs(out[k].l / 256.0 - expected(left, position)));
+			worstError = std::max(worstError, std::abs(out[k].r / 256.0 - expected(right, position)));
+		}
+		CHECK(worstError <= 1.0); // Within one 24-bit step
+	}
 }
 
 TEST(UsbAudioResamplerTests, reportsRunningDry) {

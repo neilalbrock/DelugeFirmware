@@ -21,6 +21,7 @@
 // be unit tested.
 
 #include "io/usb/usb_audio_descriptor.h"
+#include "util/fixedpoint.h"
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -199,43 +200,69 @@ public:
 	template <size_t kCapacity>
 	bool render(std::span<Frame> out, FrameRing<kCapacity>& source) {
 		bool ranDry = false;
-		for (Frame& frame : out) {
-			while (phase_ >= kUnity) {
-				Frame next{0, 0};
-				if (source.pop({&next, 1}) == 0) {
-					ranDry = true;
-				}
-				history_ = {history_[1], history_[2], history_[3], next};
-				phase_ -= kUnity;
+		while (!out.empty()) {
+			// Output frame k sits at source position phase_ + k * increment_, counting from history_[0], so this chunk
+			// moves the history on by the whole part of the last one's position
+			size_t numFrames = std::min(out.size(), kMaxChunkFrames);
+			size_t numNew;
+			while ((numNew = static_cast<size_t>((phase_ + (numFrames - 1) * increment_) >> 32)) > kMaxChunkSource) {
+				numFrames /= 2;
 			}
-			uint32_t t = static_cast<uint32_t>(phase_ >> 8); // Q24
-			frame.l = interpolate(history_[0].l, history_[1].l, history_[2].l, history_[3].l, t);
-			frame.r = interpolate(history_[0].r, history_[1].r, history_[2].r, history_[3].r, t);
-			phase_ += increment_;
+
+			// The history, then the source frames this chunk needs, so each output just indexes in
+			std::array<Frame, kHistory + kMaxChunkSource> frames;
+			std::copy(history_.begin(), history_.end(), frames.begin());
+			size_t got = source.pop({&frames[kHistory], numNew});
+			if (got < numNew) {
+				ranDry = true;
+				std::fill(&frames[kHistory + got], &frames[kHistory + numNew], Frame{0, 0});
+			}
+
+			uint64_t phase = phase_;
+			uint64_t increment = increment_;
+			for (size_t k = 0; k < numFrames; k++) {
+				const Frame* x = &frames[phase >> 32];
+				auto t = static_cast<int32_t>(static_cast<uint32_t>(phase) >> 1); // Q31
+				out[k].l = interpolate(x[0].l, x[1].l, x[2].l, x[3].l, t);
+				out[k].r = interpolate(x[0].r, x[1].r, x[2].r, x[3].r, t);
+				phase += increment;
+			}
+
+			std::copy_n(&frames[numNew], kHistory, history_.begin());
+			phase_ = phase - (uint64_t{numNew} << 32);
+			out = out.subspan(numFrames);
 		}
 		return !ranDry;
 	}
 
 private:
-	// Between x1 and x2, t of the way (Q24). Works on the 24 meaningful bits, so nothing overflows 64 bits.
-	static int32_t interpolate(int32_t x0, int32_t x1, int32_t x2, int32_t x3, uint32_t t) {
-		int64_t a = x0 >> 8;
-		int64_t b = x1 >> 8;
-		int64_t c = x2 >> 8;
-		int64_t d = x3 >> 8;
-		// Twice the usual Catmull-Rom coefficients, to stay in integers
-		int64_t k1 = c - a;
-		int64_t k2 = 2 * a - 5 * b + 4 * c - d;
-		int64_t k3 = (d - a) + 3 * (b - c);
-		int64_t y = ((((k3 * t) >> 24) + k2) * t) >> 24;
-		y = (((y + k1) * t) >> 24);
-		y = b + (y >> 1);
-		y = std::clamp<int64_t>(y, -(int64_t{1} << 23), (int64_t{1} << 23) - 1);
-		return static_cast<int32_t>(y << 8);
+	static constexpr size_t kHistory = 4;
+	// Rendering goes in chunks of up to this many frames, through a buffer of the source frames they need on the stack.
+	// That's room for an increment of up to 2, beyond which chunks just get smaller.
+	static constexpr size_t kMaxChunkFrames = 64;
+	static constexpr size_t kMaxChunkSource = 2 * kMaxChunkFrames;
+
+	// Between x1 and x2, t of the way (Q31). Catmull-Rom, with twice the usual coefficients to stay in integers and
+	// evaluated by Horner's rule, where each multiply by t also halves (smmul with t in Q31) and is doubled back.
+	// Works on the samples' top 26 bits: the samples' 24 meaningful bits plus 2 for precision. Then no step can
+	// overflow - k2, the biggest coefficient, is at most 12 * 2^25, and each partial sum stays under 2^30.
+	[[gnu::always_inline]] static int32_t interpolate(int32_t x0, int32_t x1, int32_t x2, int32_t x3, int32_t t) {
+		int32_t a = x0 >> 6;
+		int32_t b = x1 >> 6;
+		int32_t c = x2 >> 6;
+		int32_t d = x3 >> 6;
+		int32_t k1 = c - a;
+		int32_t k2 = 2 * a - 5 * b + 4 * c - d;
+		int32_t k3 = (d - a) + 3 * (b - c);
+		int32_t y = k2 + 2 * multiply_32x32_rshift32(k3, t);
+		y = k1 + 2 * multiply_32x32_rshift32(y, t);
+		y = b + multiply_32x32_rshift32(y, t); // Halving here gives the usual coefficients
+		y = std::clamp<int32_t>(y, -(1 << 25), (1 << 25) - 1);
+		return y << 6;
 	}
 
 	// The output lies between history_[1] and history_[2], phase_ (32.32) of the way
-	std::array<Frame, 4> history_{};
+	std::array<Frame, kHistory> history_{};
 	uint64_t phase_ = 0;
 	uint64_t increment_ = kUnity;
 };

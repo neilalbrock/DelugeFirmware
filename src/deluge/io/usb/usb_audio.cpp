@@ -126,12 +126,23 @@ uint8_t toHostPacket[USB_AUDIO_MAX_PACKET_SIZE] __attribute__((aligned(4)));
 
 	size_t numBytes = packFrames24(std::span{toHostFrames, numFrames}, toHostPacket);
 
-	// MBW is 16-bit, and packets are always a whole number of 6-byte frames
-	const uint16_t* halfwords = reinterpret_cast<const uint16_t*>(toHostPacket);
-	for (size_t i = 0; i < numBytes / 2; i++) {
-		USB200.D0FIFO.UINT16[H] = halfwords[i];
+	// Each access to the FIFO port is slow, so it's 32 bits at a time. Packets are whole 6-byte frames, so one with an
+	// odd number of frames ends in a halfword, which needs a 16-bit access. While sending, the width can be narrowed
+	// part way through a packet but not widened (RZ/A1L HW manual, DnFIFOSEL.MBW), so it goes back to 32 bits once
+	// the packet's handed over.
+	const uint32_t* words = reinterpret_cast<const uint32_t*>(toHostPacket);
+	for (size_t i = 0; i < numBytes / 4; i++) {
+		USB200.D0FIFO.UINT32 = words[i];
+	}
+	bool endsInHalfword = (numBytes % 4) != 0;
+	if (endsInHalfword) {
+		USB200.D0FIFOSEL = USB_MBW_16 | USB_CFG_PAUDIO_ISO_TO_HOST;
+		USB200.D0FIFO.UINT16[H] = reinterpret_cast<const uint16_t*>(toHostPacket)[numBytes / 2 - 1];
 	}
 	USB200.D0FIFOCTR = USB_BVAL; // Packet's shorter than the max packet size, so say it's done
+	if (endsInHalfword) {
+		USB200.D0FIFOSEL = USB_MBW_32 | USB_CFG_PAUDIO_ISO_TO_HOST;
+	}
 }
 
 void toHostPipeISR(uint16_t pipe, uint16_t event) {
@@ -155,7 +166,7 @@ void startStreamToHost() {
 	toHostPrimed = false;
 
 	// Give the pipe the D0FIFO port, for CPU access (no DMA)
-	USB200.D0FIFOSEL = USB_MBW_16 | pipe;
+	USB200.D0FIFOSEL = USB_MBW_32 | pipe;
 	while ((USB200.D0FIFOSEL & USB_CURPIPE) != pipe) {}
 
 	// Write the first packet from here, before the ISR is involved. A transmitting pipe only gets a BRDY when a buffer
@@ -207,7 +218,7 @@ volatile uint32_t fromHostUnderruns;
 volatile uint32_t fromHostDroppedFrames;
 volatile uint32_t fromHostFifoNotReady;
 
-uint8_t fromHostPacket[USB_AUDIO_MAX_PACKET_SIZE] __attribute__((aligned(4)));
+uint32_t fromHostPacket[(USB_AUDIO_MAX_PACKET_SIZE + 3) / 4]; // Whole words, as it's read 32 bits at a time
 Frame fromHostFrames[USB_AUDIO_MAX_FRAMES_PER_PACKET];
 
 // ISR. Reads the packet that's just arrived.
@@ -220,18 +231,19 @@ Frame fromHostFrames[USB_AUDIO_MAX_FRAMES_PER_PACKET];
 	}
 
 	size_t numBytes = fifoCtr & USB_DTLN;
-	if (numBytes == 0 || numBytes > sizeof(fromHostPacket)) {
+	if (numBytes == 0 || numBytes > USB_AUDIO_MAX_PACKET_SIZE) {
 		USB200.D1FIFOCTR = USB_BCLR; // Nothing to read, or bigger than the endpoint allows - discard
 		return;
 	}
 
-	// MBW is 16-bit. Reading all the data releases the buffer.
-	uint16_t* halfwords = reinterpret_cast<uint16_t*>(fromHostPacket);
-	for (size_t i = 0; i < (numBytes + 1) / 2; i++) {
-		halfwords[i] = USB200.D1FIFO.UINT16[H];
+	// 32 bits at a time, as each access to the FIFO port is slow. Reading all the data releases the buffer - a packet
+	// that ends part way through a word just leaves the rest of the last one unused.
+	for (size_t i = 0; i < (numBytes + 3) / 4; i++) {
+		fromHostPacket[i] = USB200.D1FIFO.UINT32;
 	}
 
-	size_t numFrames = unpackFrames24(fromHostPacket, numBytes, fromHostFrames, USB_AUDIO_MAX_FRAMES_PER_PACKET);
+	size_t numFrames = unpackFrames24(reinterpret_cast<const uint8_t*>(fromHostPacket), numBytes, fromHostFrames,
+	                                  USB_AUDIO_MAX_FRAMES_PER_PACKET);
 	size_t pushed = fromHostRing.push({fromHostFrames, numFrames});
 	fromHostDroppedFrames = fromHostDroppedFrames + (numFrames - pushed);
 }
@@ -253,7 +265,7 @@ void startStreamFromHost() {
 	fromHostPrimed = false;
 
 	// Give the pipe the D1FIFO port, for CPU access (no DMA)
-	USB200.D1FIFOSEL = USB_MBW_16 | pipe;
+	USB200.D1FIFOSEL = USB_MBW_32 | pipe;
 	while ((USB200.D1FIFOSEL & USB_CURPIPE) != pipe) {}
 
 	usb_pstd_set_isr_pipe_handler(pipe, &fromHostPipeISR);
