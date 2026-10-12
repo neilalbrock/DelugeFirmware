@@ -71,6 +71,22 @@ public:
 		return count;
 	}
 
+	// Producer side, for filling the ring in place: its free space from the write position, up to the end of the buffer
+	// (or the oldest unread frame, if that's sooner). Write some or all of it, then commit() that many.
+	std::span<Frame> writable() {
+		size_t write = writeIndex_.load(std::memory_order_relaxed);
+		size_t free = kCapacity - (write - readIndex_.load(std::memory_order_relaxed));
+		std::atomic_signal_fence(std::memory_order_acquire); // Don't overwrite frames before seeing they're read
+		size_t start = write & (kCapacity - 1);
+		return {&buffer_[start], std::min(free, kCapacity - start)};
+	}
+
+	// Producer side. Hands the consumer count frames, written through writable().
+	void commit(size_t count) {
+		std::atomic_signal_fence(std::memory_order_release); // Frames are written before the index says so
+		writeIndex_.store(writeIndex_.load(std::memory_order_relaxed) + count, std::memory_order_relaxed);
+	}
+
 	// Consumer side. Returns how many frames were available, up to dest.size().
 	size_t pop(std::span<Frame> dest) {
 		size_t read = readIndex_.load(std::memory_order_relaxed);
@@ -300,57 +316,83 @@ void interpolateFrames(const int32_t* source, uint64_t phase, uint64_t increment
 #endif
 }
 
-// Resamples by a ratio very close to 1, with 4-point cubic (Catmull-Rom) interpolation.
+// Resamples by a ratio very close to 1, with 4-point cubic (Catmull-Rom) interpolation. Source frames are queued in its
+// own buffer, straight after the last few used (the history), so each output just indexes in.
 class DriftResampler {
 public:
 	static constexpr uint64_t kUnity = uint64_t{1} << 32; // Increment of 1 source frame per output frame
+	static constexpr size_t kMaxQueuedFrames = 256;       // Source frames it can hold, beyond the history
 
 	void reset() {
-		history_ = {};
+		std::fill_n(frames_.begin(), kHistory, Frame{0, 0});
+		numFrames_ = kHistory;
 		phase_ = 0;
 	}
 
 	// Source frames to advance per output frame, as a 32.32 fixed-point number
 	void setIncrement(uint64_t increment) { increment_ = increment; }
 
-	// How many frames render() can produce from numSourceFrames more source frames, without running dry
-	size_t framesAvailable(size_t numSourceFrames) const {
+	// Source frames queued and not yet used
+	size_t queued() const { return numFrames_ - kHistory; }
+
+	// Queues source frames. Returns how many fitted - any more are dropped.
+	size_t addSource(std::span<const Frame> frames) {
+		size_t count = std::min(frames.size(), frames_.size() - numFrames_);
+		std::copy_n(frames.begin(), count, &frames_[numFrames_]);
+		numFrames_ += count;
+		return count;
+	}
+
+	// How many frames render() can produce from what's queued, plus numSourceFrames more, without running dry
+	size_t framesAvailable(size_t numSourceFrames = 0) const {
 		// Output frame k takes the source up to frame (phase_ + k * increment_) >> 32, which must be one we'll have
-		uint64_t limit = (uint64_t{numSourceFrames} + 1) * kUnity;
+		uint64_t limit = (uint64_t{queued() + numSourceFrames} + 1) * kUnity;
 		if (phase_ >= limit) {
 			return 0;
 		}
 		return static_cast<size_t>((limit - phase_ - 1) / increment_ + 1);
 	}
 
-	// Fills out, taking source frames from the ring as needed. Returns false if the ring ran dry, in which case
-	// silence was used in place of the missing frames.
+	// Fills out from what's queued, which has to be enough: out.size() at most framesAvailable()
+	void render(std::span<Frame> out) {
+		if (out.empty()) {
+			return;
+		}
+		size_t numUsed = sourceFramesFor(out.size());
+		interpolateFrames<kChannels>(reinterpret_cast<const int32_t*>(frames_.data()), phase_, increment_,
+		                             reinterpret_cast<int32_t*>(out.data()), out.size());
+		phase_ += out.size() * increment_ - (uint64_t{numUsed} << 32);
+
+		// What's used becomes history, and only the history and anything not used yet stay
+		std::copy(&frames_[numUsed], &frames_[numFrames_], frames_.begin());
+		numFrames_ -= numUsed;
+	}
+
+	// Fills out, queuing source frames from the ring as needed - only as many as needed, so the ring's fill level still
+	// counts everything waiting. Returns false if the ring ran dry, in which case silence was used in place of the
+	// missing frames.
 	template <size_t kCapacity>
 	bool render(std::span<Frame> out, FrameRing<kCapacity>& source) {
 		bool ranDry = false;
 		while (!out.empty()) {
-			// Output frame k sits at source position phase_ + k * increment_, counting from history_[0], so this chunk
-			// moves the history on by the whole part of the last one's position
-			size_t numFrames = std::min(out.size(), kMaxChunkFrames);
-			size_t numNew;
-			while ((numNew = static_cast<size_t>((phase_ + (numFrames - 1) * increment_) >> 32)) > kMaxChunkSource) {
+			// As much as the buffer holds the source for. That's at least half of kMaxQueuedFrames, for an increment of
+			// up to 2, beyond which it's less.
+			size_t numFrames = std::min(out.size(), kMaxQueuedFrames / 2);
+			while (sourceFramesFor(numFrames) > kMaxQueuedFrames) {
 				numFrames /= 2;
 			}
 
-			// The history, then the source frames this chunk needs, so each output just indexes in
-			std::array<Frame, kHistory + kMaxChunkSource> frames;
-			std::copy(history_.begin(), history_.end(), frames.begin());
-			size_t got = source.pop({&frames[kHistory], numNew});
-			if (got < numNew) {
-				ranDry = true;
-				std::fill(&frames[kHistory + got], &frames[kHistory + numNew], Frame{0, 0});
+			size_t numNeeded = sourceFramesFor(numFrames);
+			if (numNeeded > queued()) {
+				numFrames_ += source.pop({&frames_[numFrames_], numNeeded - queued()});
+				if (numNeeded > queued()) {
+					ranDry = true;
+					std::fill(&frames_[numFrames_], &frames_[kHistory + numNeeded], Frame{0, 0});
+					numFrames_ = kHistory + numNeeded;
+				}
 			}
 
-			interpolateFrames<kChannels>(reinterpret_cast<const int32_t*>(frames.data()), phase_, increment_,
-			                             reinterpret_cast<int32_t*>(out.data()), numFrames);
-
-			std::copy_n(&frames[numNew], kHistory, history_.begin());
-			phase_ += numFrames * increment_ - (uint64_t{numNew} << 32);
+			render(out.first(numFrames));
 			out = out.subspan(numFrames);
 		}
 		return !ranDry;
@@ -359,13 +401,16 @@ public:
 private:
 	static constexpr size_t kChannels = sizeof(Frame) / sizeof(int32_t);
 	static constexpr size_t kHistory = 4;
-	// Rendering goes in chunks of up to this many frames, through a buffer of the source frames they need on the stack.
-	// That's room for an increment of up to 2, beyond which chunks just get smaller.
-	static constexpr size_t kMaxChunkFrames = 64;
-	static constexpr size_t kMaxChunkSource = 2 * kMaxChunkFrames;
 
-	// The output lies between history_[1] and history_[2], phase_ (32.32) of the way
-	std::array<Frame, kHistory> history_{};
+	// Source frames beyond the history that numFrames outputs use. Output frame k sits at source position
+	// phase_ + k * increment_, counting from frames_[0], so it's the whole part of the last one's position.
+	size_t sourceFramesFor(size_t numFrames) const {
+		return static_cast<size_t>((phase_ + (numFrames - 1) * increment_) >> 32);
+	}
+
+	// The next output lies between frames_[1] and frames_[2], phase_ (32.32) of the way
+	std::array<Frame, kHistory + kMaxQueuedFrames> frames_{};
+	size_t numFrames_ = kHistory;
 	uint64_t phase_ = 0;
 	uint64_t increment_ = kUnity;
 };

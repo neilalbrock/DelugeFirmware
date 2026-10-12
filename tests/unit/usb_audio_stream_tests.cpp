@@ -70,6 +70,31 @@ TEST(UsbAudioFrameRingTests, discardSkipsOldestFrames) {
 	CHECK_EQUAL(0, ring.size());
 }
 
+TEST(UsbAudioFrameRingTests, fillsInPlaceAroundTheEnd) {
+	FrameRing<8> ring;
+	Frame in[6] = {};
+	ring.push(in);
+	Frame out[6]{};
+	ring.pop(out); // Now empty, with the write position at 6
+
+	// Free space runs to the end of the buffer first, then from the start
+	std::span<Frame> space = ring.writable();
+	CHECK_EQUAL(2, space.size());
+	space[0] = {1, 0};
+	space[1] = {2, 0};
+	ring.commit(2);
+	space = ring.writable();
+	CHECK_EQUAL(6, space.size());
+	space[0] = {3, 0};
+	ring.commit(1);
+
+	CHECK_EQUAL(3, ring.size());
+	CHECK_EQUAL(3, ring.pop(out));
+	CHECK_EQUAL(1, out[0].l);
+	CHECK_EQUAL(2, out[1].l);
+	CHECK_EQUAL(3, out[2].l);
+}
+
 TEST_GROUP(UsbAudioPacketSizerTests){};
 
 namespace {
@@ -366,6 +391,44 @@ TEST(UsbAudioResamplerTests, reportsRunningDry) {
 	DriftResampler resampler;
 	Frame out[16]{};
 	CHECK_FALSE(resampler.render(out, ring));
+}
+
+TEST(UsbAudioResamplerTests, queuingThenRenderingMatchesRenderingFromARing) {
+	// The same source, in odd-sized blocks, either queued in the resampler and rendered as far as it goes, or rendered
+	// from a ring in odd-sized pieces, gives the same output frame for frame
+	uint64_t increment = static_cast<uint64_t>(DriftResampler::kUnity * 1.0003);
+	DriftResampler queuing;
+	DriftResampler fromRing;
+	queuing.setIncrement(increment);
+	fromRing.setIncrement(increment);
+	FrameRing<1024> ring; // Holds the whole source
+
+	std::vector<Frame> queuedOut;
+	for (int block = 0; block < 20; block++) {
+		std::vector<Frame> source;
+		for (int32_t i = 0; i < 37; i++) {
+			int32_t x = (block * 37 + i) * 1013;
+			source.push_back({(x % 4096) << 12, -(x % 999) << 12});
+		}
+		CHECK_EQUAL(source.size(), queuing.addSource(source));
+		ring.push(source);
+
+		std::vector<Frame> out(queuing.framesAvailable());
+		queuing.render(out);
+		queuedOut.insert(queuedOut.end(), out.begin(), out.end());
+		CHECK_EQUAL(0, queuing.framesAvailable());
+	}
+
+	std::vector<Frame> ringOut(queuedOut.size());
+	for (size_t done = 0; done < ringOut.size();) {
+		size_t piece = std::min<size_t>(23, ringOut.size() - done);
+		CHECK(fromRing.render({&ringOut[done], piece}, ring));
+		done += piece;
+	}
+	for (size_t i = 0; i < ringOut.size(); i++) {
+		CHECK_EQUAL(ringOut[i].l, queuedOut[i].l);
+		CHECK_EQUAL(ringOut[i].r, queuedOut[i].r);
+	}
 }
 
 TEST(UsbAudioResamplerTests, knowsHowManyFramesItCanProduce) {

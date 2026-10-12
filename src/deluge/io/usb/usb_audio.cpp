@@ -138,9 +138,9 @@ bool dmaEnded(uint32_t channel) {
  *
  * The stream is synchronous: it runs on the computer's clock, at 44.1 frames per 1ms USB frame, so that as far as the
  * computer is concerned both streams share one clock. The audio engine's output is on the codec's clock, so it's
- * resampled to match: feedOutputToHost() adds each block to toHostCodecRing, and once a batch has built up there,
- * toHostResampler turns as much of it as it can into frames for toHostRing, with toHostServo steering the ratio to keep
- * toHostRing's fill level steady.
+ * resampled to match: feedOutputToHost() queues each block in toHostResampler, and once a batch has built up there,
+ * resamples as much of it as it can straight into toHostRing, with toHostServo steering the ratio to keep toHostRing's
+ * fill level steady.
  *
  * The USB ISR takes frames out of toHostRing a packet at a time, whenever the pipe has a buffer free (BRDY) - which,
  * once both its buffers are full, is once per 1ms frame as the computer collects them. The DMA writes them through the
@@ -160,11 +160,9 @@ constexpr size_t kToHostSlackFrames = 192;
 // dips kToHostTargetFrames allows for.
 constexpr size_t kToHostResampleBatchFrames = 64;
 
-// Audio routine only: the codec's output, waiting to be resampled. Room for a batch that's not quite complete, plus a
-// whole block.
-FrameRing<2 * SSI_TX_BUFFER_NUM_SAMPLES> toHostCodecRing;
-static_assert(kToHostResampleBatchFrames - 1 + SSI_TX_BUFFER_NUM_SAMPLES <= 2 * SSI_TX_BUFFER_NUM_SAMPLES);
+// Audio routine only. Queues the codec's output: room for a batch that's not quite complete, plus a whole block.
 DriftResampler toHostResampler;
+static_assert(kToHostResampleBatchFrames - 1 + SSI_TX_BUFFER_NUM_SAMPLES <= DriftResampler::kMaxQueuedFrames);
 RateServo toHostServo{kToHostTargetFrames};
 bool toHostServoRunning;
 
@@ -281,7 +279,6 @@ void startStreamToHost() {
 	constexpr uint16_t pipe = USB_CFG_PAUDIO_ISO_TO_HOST;
 
 	// Nothing's being pushed or popped yet - the ISR isn't involved, and the audio routine can't run while this does
-	toHostCodecRing.clear();
 	toHostResampler.reset();
 	toHostResampler.setIncrement(DriftResampler::kUnity);
 	toHostServoRunning = false;
@@ -666,19 +663,18 @@ void processInputFromHost(size_t numFramesToRead) {
 	Frame block[SSI_TX_BUFFER_NUM_SAMPLES];
 	while (numFrames > 0) {
 		// The buffer's uncached, so it's written in runs rather than a sample at a time - each up to its end
-		size_t blockFrames = std::min(
-		    {numFrames, std::size(block), static_cast<size_t>(SSI_RX_BUFFER_NUM_SAMPLES - inputProcessedUpTo)});
-		renderFromHost({block, blockFrames});
-
+		size_t runFrames = std::min(numFrames, static_cast<size_t>(SSI_RX_BUFFER_NUM_SAMPLES - inputProcessedUpTo));
 		Frame* dest = &input[inputProcessedUpTo];
 		if (replace) {
-			std::copy_n(block, blockFrames, dest);
+			renderFromHost({dest, runFrames}); // Straight in
 		}
 		else {
-			mixFrames(dest, block, blockFrames);
+			runFrames = std::min(runFrames, std::size(block));
+			renderFromHost({block, runFrames});
+			mixFrames(dest, block, runFrames);
 		}
-		inputProcessedUpTo = (inputProcessedUpTo + blockFrames) & (SSI_RX_BUFFER_NUM_SAMPLES - 1);
-		numFrames -= blockFrames;
+		inputProcessedUpTo = (inputProcessedUpTo + runFrames) & (SSI_RX_BUFFER_NUM_SAMPLES - 1);
+		numFrames -= runFrames;
 	}
 }
 
@@ -686,9 +682,9 @@ void feedOutputToHost(std::span<const StereoSample> frames) {
 	if (!streamingToHost.load(std::memory_order_acquire)) {
 		return;
 	}
-	size_t pushed = toHostCodecRing.push({reinterpret_cast<const Frame*>(frames.data()), frames.size()});
-	toHostDroppedFrames = toHostDroppedFrames + (frames.size() - pushed);
-	if (toHostCodecRing.size() < kToHostResampleBatchFrames) {
+	size_t queued = toHostResampler.addSource({reinterpret_cast<const Frame*>(frames.data()), frames.size()});
+	toHostDroppedFrames = toHostDroppedFrames + (frames.size() - queued);
+	if (toHostResampler.queued() < kToHostResampleBatchFrames) {
 		return;
 	}
 
@@ -699,16 +695,16 @@ void feedOutputToHost(std::span<const StereoSample> frames) {
 	}
 	toHostServoRunning = primed;
 
-	Frame resampled[SSI_TX_BUFFER_NUM_SAMPLES];
+	// Straight into toHostRing - in two goes if its free space wraps around the end
 	size_t numResampled = 0;
 	while (true) {
-		size_t numFrames = std::min(
-		    {toHostResampler.framesAvailable(toHostCodecRing.size()), toHostRing.space(), std::size(resampled)});
+		std::span<Frame> space = toHostRing.writable();
+		size_t numFrames = std::min(space.size(), toHostResampler.framesAvailable());
 		if (numFrames == 0) {
 			break;
 		}
-		toHostResampler.render({resampled, numFrames}, toHostCodecRing);
-		toHostRing.push({resampled, numFrames});
+		toHostResampler.render(space.first(numFrames));
+		toHostRing.commit(numFrames);
 		numResampled += numFrames;
 	}
 
