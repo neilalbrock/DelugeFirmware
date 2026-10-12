@@ -276,7 +276,7 @@ int32_t numAudioLogItems = 0;
 #endif
 
 /// Force a voice to stop within this render window. Will click slightly, especially if multiple are stopped in the
-/// same render. Will stop an audio clip if there are no voices to  kill
+/// same render. Will stop an audio clip if there are no voices to kill
 void killOneVoice(size_t num_samples) {
 	logAction("kill");
 	auto lowest_priority_voices = sounds //<
@@ -285,10 +285,13 @@ void killOneVoice(size_t num_samples) {
 	auto it = std::ranges::max_element(lowest_priority_voices, [](const auto& a, const auto& b) {
 		return a->getPriorityRating() < b->getPriorityRating();
 	});
+	// are there any active voices to kill?
 	if (it == lowest_priority_voices.end()) {
+		// no active voices found, try to cull an audio clip instead
 		if (currentSong) {
 			currentSong->cullAudioClipVoice();
 		}
+		// return early since there are no active voices to kill
 		return;
 	}
 
@@ -1561,7 +1564,16 @@ void registerSideChainHit(int32_t strength) {
 	sideChainHitPending = combineHitStrengths(strength, sideChainHitPending);
 }
 
-void previewSample(String* path, FilePointer* filePointer, bool shouldActuallySound) {
+PreviewVolume PreviewVolume::neutral() {
+	return {
+	    .volumePostFX = getParamFromUserValue(params::GLOBAL_VOLUME_POST_FX, kDefaultSoundVolumeUserValue),
+	    .localVolume = 0,
+	    .velocityCableDepth = getParamFromUserValue(params::PATCH_CABLE, kSampleDrumVelocityCableUserValue),
+	    .velocityCablePolarity = PatchCable::getDefaultPolarity(PatchSource::VELOCITY),
+	};
+}
+
+void previewSample(String* path, FilePointer* filePointer, bool shouldActuallySound, PreviewVolume const& volume) {
 	stopAnyPreviewing();
 	MultisampleRange* range = (MultisampleRange*)sampleForPreview->sources[0].getOrCreateFirstRange();
 	if (!range) {
@@ -1575,6 +1587,22 @@ void previewSample(String* path, FilePointer* filePointer, bool shouldActuallySo
 	}
 
 	if (shouldActuallySound) {
+		// Adopt the volume of the instrument / kit-row the sample will be loaded into, so the preview sounds the same
+		// before and after selecting it (issue #1591). The song master volume is applied downstream in renderSongFX().
+		PatchedParamSet* previewParams = paramManagerForSamplePreview->getPatchedParamSet();
+		previewParams->params[params::GLOBAL_VOLUME_POST_FX].setCurrentValueBasicForSetup(volume.volumePostFX);
+		previewParams->params[params::LOCAL_VOLUME].setCurrentValueBasicForSetup(volume.localVolume);
+
+		// setupAsSample() gives the preview drum exactly one patch cable: VELOCITY -> LOCAL_VOLUME.
+		PatchCable& velocityCable = paramManagerForSamplePreview->getPatchCableSet()->patchCables[0];
+		velocityCable.param.setCurrentValueBasicForSetup(volume.velocityCableDepth);
+		velocityCable.polarity = volume.velocityCablePolarity;
+
+		// GLOBAL_VOLUME_POST_FX is a Sound-level param with no patch cables on the preview drum, so its final value
+		// won't update on its own - recompute it before we note-on. LOCAL_VOLUME is per-voice and is picked up when
+		// the new voice is patched during noteOn().
+		sampleForPreview->recalculatePatchingToParam(params::GLOBAL_VOLUME_POST_FX, paramManagerForSamplePreview);
+
 		char modelStackMemory[MODEL_STACK_MAX_SIZE];
 		ModelStackWithThreeMainThings* modelStack = setupModelStackWithThreeMainThingsButNoNoteRow(
 		    modelStackMemory, currentSong, sampleForPreview, NULL, paramManagerForSamplePreview);
