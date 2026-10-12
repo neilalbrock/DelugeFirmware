@@ -70,6 +70,25 @@ void setIRQInterruptBothEdges(int irqNumber);
 void setupTimerWithInterruptHandler(int timerNo, int scale, void (*handler)(uint32_t intSense), uint8_t priority);
 void setupRunningClock(int timer, int preScale);
 void setupAndEnableInterrupt(void (*handler)(uint32_t), uint16_t interruptID, uint8_t priority);
+
+/// Defines wrapperName, an interrupt handler that calls handler with the VFP/NEON registers it's allowed to change
+/// (d0-d7, d16-d31 and FPSCR) saved around it. The IRQ entry (irqfiq_handler.S) only saves core registers, so a handler
+/// that uses VFP or NEON at all - including through memcpy, which is NEON code - must be wrapped in this, or it
+/// corrupts whatever it interrupted. Use it like a declaration, with a semicolon after it.
+#define DEFINE_FPU_PRESERVING_INTERRUPT_HANDLER(wrapperName, handler)                                                  \
+	__attribute__((naked)) void wrapperName(uint32_t sense) {                                                          \
+		__asm__ volatile("push {r4, lr}\n\t"                                                                           \
+		                 "vpush {d0-d7}\n\t"                                                                           \
+		                 "vpush {d16-d31}\n\t"                                                                         \
+		                 "vmrs r4, fpscr\n\t"                                                                          \
+		                 "bl %c0\n\t" /* sense is still in r0 */                                                       \
+		                 "vmsr fpscr, r4\n\t"                                                                          \
+		                 "vpop {d16-d31}\n\t"                                                                          \
+		                 "vpop {d0-d7}\n\t"                                                                            \
+		                 "pop {r4, pc}" ::"i"(handler));                                                               \
+	}                                                                                                                  \
+	void wrapperName(uint32_t sense) /* Redeclared, just to take the semicolon */
+
 #ifdef __cplusplus
 
 /// Proof that interrupts are disabled. Functions which must only be called with interrupts disabled should take one of

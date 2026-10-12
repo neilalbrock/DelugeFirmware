@@ -21,16 +21,23 @@
 #include "io/usb/usb_audio_descriptor.h"
 #include "io/usb/usb_audio_stream.h"
 #include "model/settings/runtime_feature_settings.h"
-#include "util/fixedpoint.h"
 #include <algorithm>
+#include <arm_neon.h>
 #include <atomic>
 #include <cstddef>
+#include <cstring>
 
 extern "C" {
+#include "OSLikeStuff/timers_interrupts/timers_interrupts.h"
+#include "RZA1/cache/cache.h"
+#include "RZA1/cpu_specific.h"
+#include "RZA1/intc/devdrv_intc.h"
+#include "RZA1/system/iobitmasks/dmac_iobitmask.h"
 #include "RZA1/system/iodefine.h"
 #include "RZA1/usb/r_usb_basic/r_usb_basic_if.h"
 #include "RZA1/usb/r_usb_basic/src/driver/inc/r_usb_pstd_hooks.h"
 #include "RZA1/usb/r_usb_basic/src/hw/inc/r_usb_bitdefine.h"
+#include "drivers/dmac/dmac.h"
 #include "drivers/ssi/ssi.h"
 #include "drivers/usb/userdef/r_usb_paudio_config.h"
 
@@ -53,6 +60,79 @@ bool streamingFromHost = false;
 std::atomic<bool> streamingToHost = false;
 
 /*********************************************************************************************************************
+ * DMA
+ *
+ * Each access to the USB FIFO ports keeps the CPU waiting for about 340ns, which over a whole packet adds up to several
+ * percent of the CPU. So each stream has a DMA channel to move its packets between the FIFO port and a buffer in RAM.
+ * The ISR just fills or empties the buffer, and an interrupt at the end of each DMA transfer finishes the packet off.
+ *
+ * The end-of-transfer handlers use memcpy, which is NEON code, so they're wrapped to save the NEON registers - as is
+ * the USB ISR itself, in r_usb_usbif_api.c.
+ *
+ * The DMA uses the buffers' real addresses, and the CPU the uncached mirror, so the cache never needs cleaning or
+ * invalidating - other than once, in case anything's left there from when the buffers were zeroed at startup. Each
+ * buffer has whole cache lines to itself, so no caching of anything else can write over it.
+ *********************************************************************************************************************/
+
+constexpr size_t kDmaBufferSize = (USB_AUDIO_MAX_PACKET_SIZE + CACHE_LINE_SIZE - 1) & ~size_t{CACHE_LINE_SIZE - 1};
+
+// The same as the USB interrupt's, so neither interrupts the other
+constexpr uint8_t kDmaInterruptPriority = 9;
+
+// 32 bits at a time, one transfer per request from the FIFO port, which holds its request line high while it's ready
+// (RZ/A1L HW manual table 9.4)
+constexpr uint32_t kDmaConfig = DMAC0_CHCFG_n_LVL | DMAC0_CHCFG_n_HIEN | (0b010 << 8) // AM: bus cycle mode
+                                | (0b0010 << 16)                                      // DDS: 32 bits
+                                | (0b0010 << 12);                                     // SDS: 32 bits
+
+template <typename T>
+T* uncached(T* address) {
+	return reinterpret_cast<T*>(reinterpret_cast<uintptr_t>(address) + UNCACHED_MIRROR_OFFSET);
+}
+
+void stopDma(uint32_t channel) {
+	auto& dma = DMACn(channel);
+	dma.CHCTRL_n = DMAC0_CHCTRL_n_CLREN;
+	while (dma.CHSTAT_n & (DMAC0_CHSTAT_n_EN | DMAC0_CHSTAT_n_TACT)) {}
+	dma.CHCTRL_n = DMAC0_CHCTRL_n_SWRST; // Clears its status, including any end of transfer not yet handled
+}
+
+void setUpDma(uint32_t channel, uint32_t config, uint32_t source, uint32_t destination, uint32_t dmars,
+              void (*endHandler)(uint32_t), uint8_t* buffer) {
+	invalidate_range_all_caches(reinterpret_cast<uintptr_t>(buffer),
+	                            reinterpret_cast<uintptr_t>(buffer) + kDmaBufferSize);
+	stopDma(channel);
+	auto& dma = DMACn(channel);
+	dma.CHCFG_n = config | (channel & DMAC0_CHCFG_n_SEL);
+	dma.CHITVL_n = 0;
+	dma.CHEXT_n = 0;
+	dma.N0SA_n = source;
+	dma.N0DA_n = destination;
+	setDMARS(channel, dmars);
+	setupAndEnableInterrupt(endHandler, DMA_INTERRUPT_0 + channel, kDmaInterruptPriority);
+}
+
+// Transfers numBytes, a multiple of 4, between the channel's buffer and FIFO port
+void startDma(uint32_t channel, uint32_t numBytes) {
+	asm volatile("dsb" ::: "memory"); // Anything the CPU has written to the buffer has to reach RAM first
+	auto& dma = DMACn(channel);
+	dma.N0TB_n = numBytes;
+	dma.CHCTRL_n = DMAC0_CHCTRL_n_SWRST; // Clears the last transfer's status. Doesn't work together with SETEN.
+	dma.CHCTRL_n = DMAC0_CHCTRL_n_SETEN;
+}
+
+// For the end-of-transfer interrupt: whether the channel has really finished a transfer - rather than, say, been
+// stopped since - and if so, clears that
+bool dmaEnded(uint32_t channel) {
+	auto& dma = DMACn(channel);
+	if (!(dma.CHSTAT_n & DMAC0_CHSTAT_n_END)) {
+		return false;
+	}
+	dma.CHCTRL_n = DMAC0_CHCTRL_n_CLREND;
+	return true;
+}
+
+/*********************************************************************************************************************
  * Deluge -> computer
  *
  * The stream is synchronous: it runs on the computer's clock, at 44.1 frames per 1ms USB frame, so that as far as the
@@ -61,7 +141,7 @@ std::atomic<bool> streamingToHost = false;
  * as it can into frames for toHostRing, with toHostServo steering the ratio to keep toHostRing's fill level steady.
  *
  * The USB ISR takes frames out of toHostRing a packet at a time, whenever the pipe has a buffer free (BRDY) - which,
- * once both its buffers are full, is once per 1ms frame as the computer collects them. It writes them through the
+ * once both its buffers are full, is once per 1ms frame as the computer collects them. The DMA writes them through the
  * D0FIFO port, which nothing else uses, so it can never disturb MIDI's use of the CFIFO port from task context.
  *********************************************************************************************************************/
 
@@ -92,7 +172,15 @@ volatile uint32_t toHostFifoNotReady;
 Frame toHostFrames[PacketSizer::kMaxFrames];
 uint8_t toHostPacket[USB_AUDIO_MAX_PACKET_SIZE] __attribute__((aligned(4)));
 
-// ISR. Writes the next packet into whichever of the pipe's buffers is free.
+// The DMA writes the packet's whole words, then the CPU any halfword left at the end
+alignas(CACHE_LINE_SIZE) uint8_t toHostDmaBuffer[kDmaBufferSize];
+constexpr uint16_t kToHostFifoSel = USB_DREQE | USB_CFG_PAUDIO_ISO_TO_HOST;
+bool toHostDmaBusy;
+bool toHostPacketWanted; // The pipe had a buffer free while the DMA was busy
+bool toHostEndsInHalfword;
+uint16_t toHostFinalHalfword;
+
+// ISR. Starts writing the next packet into whichever of the pipe's buffers is free.
 // GCC 14.2's predictive commoning pass crashes on this during LTO (internal compiler error), whether it's inlined into
 // its callers or not
 [[gnu::noinline, gnu::optimize("no-predictive-commoning")]] void writePacketToHost() {
@@ -126,29 +214,56 @@ uint8_t toHostPacket[USB_AUDIO_MAX_PACKET_SIZE] __attribute__((aligned(4)));
 
 	size_t numBytes = packFrames24(std::span{toHostFrames, numFrames}, toHostPacket);
 
-	// Each access to the FIFO port is slow, so it's 32 bits at a time. Packets are whole 6-byte frames, so one with an
-	// odd number of frames ends in a halfword, which needs a 16-bit access. While sending, the width can be narrowed
-	// part way through a packet but not widened (RZ/A1L HW manual, DnFIFOSEL.MBW), so it goes back to 32 bits once
-	// the packet's handed over.
-	const uint32_t* words = reinterpret_cast<const uint32_t*>(toHostPacket);
-	for (size_t i = 0; i < numBytes / 4; i++) {
-		USB200.D0FIFO.UINT32 = words[i];
+	// Packets are whole 6-byte frames, so one with an odd number of frames ends in a halfword
+	size_t dmaBytes = numBytes & ~size_t{3};
+	toHostEndsInHalfword = (numBytes % 4) != 0;
+	if (toHostEndsInHalfword) {
+		toHostFinalHalfword = reinterpret_cast<const uint16_t*>(toHostPacket)[numBytes / 2 - 1];
 	}
-	bool endsInHalfword = (numBytes % 4) != 0;
-	if (endsInHalfword) {
-		USB200.D0FIFOSEL = USB_MBW_16 | USB_CFG_PAUDIO_ISO_TO_HOST;
-		USB200.D0FIFO.UINT16[H] = reinterpret_cast<const uint16_t*>(toHostPacket)[numBytes / 2 - 1];
+	std::memcpy(uncached(toHostDmaBuffer), toHostPacket, dmaBytes);
+	toHostDmaBusy = true;
+	startDma(USB_AUDIO_TO_HOST_DMA_CHANNEL, dmaBytes);
+}
+
+// DMA end interrupt. Finishes off the packet.
+void toHostDmaEnded(uint32_t) {
+	if (!dmaEnded(USB_AUDIO_TO_HOST_DMA_CHANNEL)) {
+		return;
+	}
+	toHostDmaBusy = false;
+	if (!streamingToHost.load(std::memory_order_relaxed)) {
+		return;
+	}
+
+	// While sending, the access width can be narrowed part way through a packet but not widened (RZ/A1L HW manual,
+	// DnFIFOSEL.MBW), so a final halfword is written 16 bits wide, and it goes back to 32 bits once the packet's handed
+	// over
+	if (toHostEndsInHalfword) {
+		USB200.D0FIFOSEL = kToHostFifoSel | USB_MBW_16;
+		USB200.D0FIFO.UINT16[H] = toHostFinalHalfword;
 	}
 	USB200.D0FIFOCTR = USB_BVAL; // Packet's shorter than the max packet size, so say it's done
-	if (endsInHalfword) {
-		USB200.D0FIFOSEL = USB_MBW_32 | USB_CFG_PAUDIO_ISO_TO_HOST;
+	if (toHostEndsInHalfword) {
+		USB200.D0FIFOSEL = kToHostFifoSel | USB_MBW_32;
+	}
+
+	if (toHostPacketWanted) {
+		toHostPacketWanted = false;
+		writePacketToHost();
 	}
 }
 
+DEFINE_FPU_PRESERVING_INTERRUPT_HANDLER(toHostDmaEndedPreservingFpu, toHostDmaEnded);
+
 void toHostPipeISR(uint16_t pipe, uint16_t event) {
-	if (event == USB_INT_BRDY) {
-		writePacketToHost();
+	if (event != USB_INT_BRDY) {
+		return;
 	}
+	if (toHostDmaBusy) {
+		toHostPacketWanted = true; // Once this packet's done
+		return;
+	}
+	writePacketToHost();
 }
 
 // Called from the PCD task (not the ISR) when the computer selects the streaming alternate setting. By then the
@@ -164,10 +279,19 @@ void startStreamToHost() {
 	toHostRing.clear();
 	toHostSizer.reset();
 	toHostPrimed = false;
+	toHostDmaBusy = false;
+	toHostPacketWanted = false;
 
-	// Give the pipe the D0FIFO port, for CPU access (no DMA)
-	USB200.D0FIFOSEL = USB_MBW_32 | pipe;
+	// Give the pipe the D0FIFO port, in cycle steal mode: the DMA writes through the port itself, a word at a time
+	USB200.D0FBCFG = 0;
+	USB200.D0FIFOSEL = kToHostFifoSel | USB_MBW_32;
 	while ((USB200.D0FIFOSEL & USB_CURPIPE) != pipe) {}
+	setUpDma(USB_AUDIO_TO_HOST_DMA_CHANNEL, kDmaConfig | DMAC0_CHCFG_n_REQD | DMAC0_CHCFG_n_DAD,
+	         reinterpret_cast<uint32_t>(toHostDmaBuffer), reinterpret_cast<uint32_t>(&USB200.D0FIFO.UINT32),
+	         DMARS_FOR_USB0_D0FIFO, &toHostDmaEndedPreservingFpu, toHostDmaBuffer);
+
+	// Before the first packet, as the end of its DMA transfer checks this
+	streamingToHost = true;
 
 	// Write the first packet from here, before the ISR is involved. A transmitting pipe only gets a BRDY when a buffer
 	// frees up - including, with double buffering, the other buffer once this one's written - so this sets the
@@ -178,8 +302,6 @@ void startStreamToHost() {
 	usb_pstd_set_isr_pipe_handler(pipe, &toHostPipeISR);
 	USB200.BRDYENB |= (1u << pipe);
 	usb_cstd_set_buf(USB_NULL, pipe);
-
-	streamingToHost = true;
 }
 
 // Called from the PCD task when the computer goes back to the idle alternate setting, or reconfigures. The driver has
@@ -188,13 +310,14 @@ void stopStreamToHost() {
 	streamingToHost = false;
 	usb_pstd_set_isr_pipe_handler(USB_CFG_PAUDIO_ISO_TO_HOST, nullptr);
 	USB200.BRDYENB &= ~(1u << USB_CFG_PAUDIO_ISO_TO_HOST);
+	stopDma(USB_AUDIO_TO_HOST_DMA_CHANNEL);
 	USB200.D0FIFOSEL = 0;
 }
 
 /*********************************************************************************************************************
  * Computer -> Deluge
  *
- * The USB ISR reads each packet as it arrives (BRDY) into fromHostRing, through the D1FIFO port. At the start of each
+ * Each packet is read as it arrives (BRDY) into fromHostRing - by DMA, through the D1FIFO port. At the start of each
  * audio routine, processInputFromHost() takes the frames the codec has captured since last time - still in the codec's
  * input buffer, ahead of anything that reads them - and replaces them with, or mixes in, the computer's audio,
  * resampled from the computer's clock to the codec's. So everything that uses the input - monitoring, recording,
@@ -221,9 +344,13 @@ volatile uint32_t fromHostFifoNotReady;
 uint32_t fromHostPacket[(USB_AUDIO_MAX_PACKET_SIZE + 3) / 4]; // Whole words, as it's read 32 bits at a time
 Frame fromHostFrames[USB_AUDIO_MAX_FRAMES_PER_PACKET];
 
-// ISR. Reads the packet that's just arrived.
-// noinline for the same reason as writePacketToHost()
-[[gnu::noinline]] void readPacketFromHost() {
+alignas(CACHE_LINE_SIZE) uint8_t fromHostDmaBuffer[kDmaBufferSize];
+bool fromHostDmaBusy;
+bool fromHostPacketWaiting; // Another packet arrived while the DMA was busy
+size_t fromHostPacketBytes; // Size of the packet the DMA's reading
+
+// ISR. Starts reading the packet that's just arrived.
+void readPacketFromHost() {
 	uint16_t fifoCtr = USB200.D1FIFOCTR;
 	if (!(fifoCtr & USB_FRDY)) {
 		fromHostFifoNotReady = fromHostFifoNotReady + 1;
@@ -236,22 +363,48 @@ Frame fromHostFrames[USB_AUDIO_MAX_FRAMES_PER_PACKET];
 		return;
 	}
 
-	// 32 bits at a time, as each access to the FIFO port is slow. Reading all the data releases the buffer - a packet
-	// that ends part way through a word just leaves the rest of the last one unused.
-	for (size_t i = 0; i < (numBytes + 3) / 4; i++) {
-		fromHostPacket[i] = USB200.D1FIFO.UINT32;
+	// In whole words. Reading all the data releases the buffer - a packet that ends part way through a word just
+	// leaves the rest of the last one unused.
+	fromHostPacketBytes = numBytes;
+	fromHostDmaBusy = true;
+	startDma(USB_AUDIO_FROM_HOST_DMA_CHANNEL, (numBytes + 3) & ~size_t{3});
+}
+
+// DMA end interrupt. Takes the frames out of the packet.
+// noinline for the same reason as writePacketToHost()
+[[gnu::noinline]] void fromHostDmaEnded(uint32_t) {
+	if (!dmaEnded(USB_AUDIO_FROM_HOST_DMA_CHANNEL)) {
+		return;
+	}
+	fromHostDmaBusy = false;
+	if (!streamingFromHost) {
+		return;
 	}
 
+	size_t numBytes = fromHostPacketBytes;
+	std::memcpy(fromHostPacket, uncached(fromHostDmaBuffer), (numBytes + 3) & ~size_t{3});
 	size_t numFrames = unpackFrames24(reinterpret_cast<const uint8_t*>(fromHostPacket), numBytes, fromHostFrames,
 	                                  USB_AUDIO_MAX_FRAMES_PER_PACKET);
 	size_t pushed = fromHostRing.push({fromHostFrames, numFrames});
 	fromHostDroppedFrames = fromHostDroppedFrames + (numFrames - pushed);
-}
 
-void fromHostPipeISR(uint16_t pipe, uint16_t event) {
-	if (event == USB_INT_BRDY) {
+	if (fromHostPacketWaiting) {
+		fromHostPacketWaiting = false;
 		readPacketFromHost();
 	}
+}
+
+DEFINE_FPU_PRESERVING_INTERRUPT_HANDLER(fromHostDmaEndedPreservingFpu, fromHostDmaEnded);
+
+void fromHostPipeISR(uint16_t pipe, uint16_t event) {
+	if (event != USB_INT_BRDY) {
+		return;
+	}
+	if (fromHostDmaBusy) {
+		fromHostPacketWaiting = true; // Once this packet's done
+		return;
+	}
+	readPacketFromHost();
 }
 
 // Called from the PCD task when the computer selects the streaming alternate setting. By then the driver has
@@ -263,16 +416,23 @@ void startStreamFromHost() {
 	fromHostRing.clear();
 	fromHostResampler.reset();
 	fromHostPrimed = false;
+	fromHostDmaBusy = false;
+	fromHostPacketWaiting = false;
 
-	// Give the pipe the D1FIFO port, for CPU access (no DMA)
-	USB200.D1FIFOSEL = USB_MBW_32 | pipe;
+	// Give the pipe the D1FIFO port, in cycle steal mode: the DMA reads through the port itself, a word at a time
+	USB200.D1FBCFG = 0;
+	USB200.D1FIFOSEL = USB_DREQE | USB_MBW_32 | pipe;
 	while ((USB200.D1FIFOSEL & USB_CURPIPE) != pipe) {}
+	setUpDma(USB_AUDIO_FROM_HOST_DMA_CHANNEL, kDmaConfig | DMAC0_CHCFG_n_SAD,
+	         reinterpret_cast<uint32_t>(&USB200.D1FIFO.UINT32), reinterpret_cast<uint32_t>(fromHostDmaBuffer),
+	         DMARS_FOR_USB0_D1FIFO, &fromHostDmaEndedPreservingFpu, fromHostDmaBuffer);
+
+	// Before any packets can arrive, as the end of each one's DMA transfer checks this
+	streamingFromHost = true;
 
 	usb_pstd_set_isr_pipe_handler(pipe, &fromHostPipeISR);
 	USB200.BRDYENB |= (1u << pipe);
 	usb_cstd_set_buf(USB_NULL, pipe);
-
-	streamingFromHost = true;
 }
 
 // Called from the PCD task when the computer goes back to the idle alternate setting, or reconfigures. The driver has
@@ -281,6 +441,7 @@ void stopStreamFromHost() {
 	streamingFromHost = false;
 	usb_pstd_set_isr_pipe_handler(USB_CFG_PAUDIO_ISO_FROM_HOST, nullptr);
 	USB200.BRDYENB &= ~(1u << USB_CFG_PAUDIO_ISO_FROM_HOST);
+	stopDma(USB_AUDIO_FROM_HOST_DMA_CHANNEL);
 	USB200.D1FIFOSEL = 0;
 }
 
@@ -301,6 +462,18 @@ void renderFromHost(std::span<Frame> out) {
 		// Ran dry - silence until there's enough queued up again
 		fromHostUnderruns = fromHostUnderruns + 1;
 		fromHostPrimed = false;
+	}
+}
+
+// Adds source to dest, saturating, two frames at a time
+void mixFrames(Frame* dest, const Frame* source, size_t numFrames) {
+	auto* d = reinterpret_cast<int32_t*>(dest);
+	auto* s = reinterpret_cast<const int32_t*>(source);
+	for (; numFrames >= 2; numFrames -= 2, d += 4, s += 4) {
+		vst1q_s32(d, vqaddq_s32(vld1q_s32(d), vld1q_s32(s)));
+	}
+	if (numFrames != 0) {
+		vst1_s32(d, vqadd_s32(vld1_s32(d), vld1_s32(s)));
 	}
 }
 
@@ -461,26 +634,26 @@ void processInputFromHost() {
 
 	// Mixing with the internal mic would just add room noise, so only mix when something's plugged in
 	bool replace = (inputSource() == RuntimeFeatureStateUsbAudioInput::Usb) || !externalInputPluggedIn;
-	volatile int32_t* input = getRxBufferStart();
+	// Only the codec's DMA writes to the buffer as well, and only to frames ahead of these, so it needn't be volatile
+	static_assert(NUM_MONO_INPUT_CHANNELS == 2, "the codec's input frames are stereo, like Frame");
+	auto* input = reinterpret_cast<Frame*>(const_cast<int32_t*>(getRxBufferStart()));
 	size_t numFrames = (capturedUpTo - inputProcessedUpTo) & (SSI_RX_BUFFER_NUM_SAMPLES - 1);
 
 	Frame block[SSI_TX_BUFFER_NUM_SAMPLES];
 	while (numFrames > 0) {
-		size_t blockFrames = std::min(numFrames, std::size(block));
+		// The buffer's uncached, so it's written in runs rather than a sample at a time - each up to its end
+		size_t blockFrames = std::min(
+		    {numFrames, std::size(block), static_cast<size_t>(SSI_RX_BUFFER_NUM_SAMPLES - inputProcessedUpTo)});
 		renderFromHost({block, blockFrames});
 
-		for (size_t i = 0; i < blockFrames; i++) {
-			volatile int32_t* frame = &input[inputProcessedUpTo * NUM_MONO_INPUT_CHANNELS];
-			if (replace) {
-				frame[0] = block[i].l;
-				frame[1] = block[i].r;
-			}
-			else {
-				frame[0] = add_saturate(frame[0], block[i].l);
-				frame[1] = add_saturate(frame[1], block[i].r);
-			}
-			inputProcessedUpTo = (inputProcessedUpTo + 1) & (SSI_RX_BUFFER_NUM_SAMPLES - 1);
+		Frame* dest = &input[inputProcessedUpTo];
+		if (replace) {
+			std::copy_n(block, blockFrames, dest);
 		}
+		else {
+			mixFrames(dest, block, blockFrames);
+		}
+		inputProcessedUpTo = (inputProcessedUpTo + blockFrames) & (SSI_RX_BUFFER_NUM_SAMPLES - 1);
 		numFrames -= blockFrames;
 	}
 }

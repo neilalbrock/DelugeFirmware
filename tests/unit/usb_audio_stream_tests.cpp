@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <random>
+#include <type_traits>
 #include <vector>
 
 using namespace deluge::io::usb::audio;
@@ -255,6 +256,79 @@ TEST(UsbAudioResamplerTests, matchesExactCatmullRom) {
 			worstError = std::max(worstError, std::abs(out[k].r / 256.0 - expected(right, position)));
 		}
 		CHECK(worstError <= 1.0); // Within one 24-bit step
+	}
+}
+
+namespace {
+// Interpolates kChannels channels of random full-scale audio at random positions, numFrames at a time
+template <size_t kChannels>
+std::vector<int32_t> interpolateRandom(const std::vector<int32_t>& source, uint64_t phase, uint64_t increment,
+                                       size_t numFrames) {
+	std::vector<int32_t> out(numFrames * kChannels);
+	interpolateFrames<kChannels>(source.data(), phase, increment, out.data(), numFrames);
+	return out;
+}
+
+std::vector<int32_t> randomSource(size_t numSamples, uint32_t seed) {
+	std::mt19937 rng(seed);
+	std::uniform_int_distribution<int32_t> random24(-(1 << 23), (1 << 23) - 1);
+	std::vector<int32_t> samples(numSamples);
+	for (int32_t& sample : samples) {
+		sample = random24(rng) << 8;
+	}
+	return samples;
+}
+} // namespace
+
+TEST(UsbAudioResamplerTests, everyChannelCountMatchesExactCatmullRom) {
+	auto check = [](auto channels) {
+		constexpr size_t kChannels = decltype(channels)::value;
+		constexpr size_t kNumFrames = 101; // Odd, so the last frame is done on its own
+		uint64_t increment = static_cast<uint64_t>(DriftResampler::kUnity * 1.37);
+		uint64_t phase = 0x89ABCDEF;
+		std::vector<int32_t> source = randomSource((kNumFrames * 2 + 8) * kChannels, kChannels);
+		std::vector<int32_t> out = interpolateRandom<kChannels>(source, phase, increment, kNumFrames);
+
+		double worstError = 0;
+		for (size_t k = 0; k < kNumFrames; k++) {
+			uint64_t position = phase + k * increment;
+			size_t i = position >> 32;
+			double t = static_cast<double>(position & 0xFFFFFFFF) / 4294967296.0;
+			for (size_t c = 0; c < kChannels; c++) {
+				auto x = [&](size_t j) { return source[(i + j) * kChannels + c] / 256.0; };
+				double a = x(0), b = x(1), cc = x(2), d = x(3);
+				double y = b + 0.5 * t * ((cc - a) + t * ((2 * a - 5 * b + 4 * cc - d) + t * (3 * (b - cc) + d - a)));
+				y = std::clamp(y, -8388608.0, 8388607.75);
+				worstError = std::max(worstError, std::abs(out[k * kChannels + c] / 256.0 - y));
+			}
+		}
+		CHECK(worstError <= 1.0); // Within one 24-bit step
+	};
+	check(std::integral_constant<size_t, 2>{});
+	check(std::integral_constant<size_t, 4>{});
+	check(std::integral_constant<size_t, 6>{});
+	check(std::integral_constant<size_t, 8>{});
+}
+
+TEST(UsbAudioResamplerTests, channelsDontAffectEachOther) {
+	// Eight channels at once give exactly what each pair does on its own
+	constexpr size_t kNumFrames = 77;
+	uint64_t increment = static_cast<uint64_t>(DriftResampler::kUnity * 0.9997);
+	uint64_t phase = 0x7FFFFFFF;
+	std::vector<int32_t> source = randomSource((kNumFrames + 8) * 8, 99);
+	std::vector<int32_t> all = interpolateRandom<8>(source, phase, increment, kNumFrames);
+
+	for (size_t pair = 0; pair < 4; pair++) {
+		std::vector<int32_t> pairSource;
+		for (size_t i = 0; i < source.size() / 8; i++) {
+			pairSource.push_back(source[i * 8 + pair * 2]);
+			pairSource.push_back(source[i * 8 + pair * 2 + 1]);
+		}
+		std::vector<int32_t> pairOut = interpolateRandom<2>(pairSource, phase, increment, kNumFrames);
+		for (size_t k = 0; k < kNumFrames; k++) {
+			CHECK_EQUAL(pairOut[k * 2], all[k * 8 + pair * 2]);
+			CHECK_EQUAL(pairOut[k * 2 + 1], all[k * 8 + pair * 2 + 1]);
+		}
 	}
 }
 

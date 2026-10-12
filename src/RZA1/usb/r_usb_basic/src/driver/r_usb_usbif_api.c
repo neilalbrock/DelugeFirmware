@@ -161,6 +161,11 @@ uint16_t R_USB_GetEvent(usb_ctrl_t* p_ctrl)
     return event;
 } /* End of function R_USB_GetEvent() */
 
+#if ((USB_CFG_MODE & USB_CFG_PERI) == USB_CFG_PERI)
+// In peripheral mode the ISR also services USB audio's streams, whose code uses NEON
+static DEFINE_FPU_PRESERVING_INTERRUPT_HANDLER(usb_pstd_usb_handler_preserving_fpu, usb_pstd_usb_handler);
+#endif
+
 /***********************************************************************************************************************
  Function Name   : R_USB_Open
  Description     : Start of USB Driver.
@@ -283,7 +288,7 @@ usb_err_t R_USB_Open(usb_ctrl_t* ctrl, usb_cfg_t* cfg)
             /* Setting MCU(USB interrupt init) register */
             // usb_cpu_usbint_init(ctrl->module);
 
-            setupAndEnableInterrupt(usb_pstd_usb_handler, INTC_ID_USBI0, 9);
+            setupAndEnableInterrupt(usb_pstd_usb_handler_preserving_fpu, INTC_ID_USBI0, 9);
 
             /* Setting USB relation register  */
             hw_usb_pmodule_init();

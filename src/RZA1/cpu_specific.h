@@ -38,6 +38,10 @@
 
 #define DMARS_FOR_RSPI_TX 0b100100001
 
+// USB0's D0FIFO and D1FIFO ports (RZ/A1L HW manual table 9.4: MID 010_0000 / 010_0001, RID 11)
+#define DMARS_FOR_USB0_D0FIFO 0b010000011
+#define DMARS_FOR_USB0_D1FIFO 0b010000111
+
 // UART ----------------------------------------------------
 enum UartItemType {
     UART_ITEM_PIC,
@@ -89,8 +93,8 @@ enum UartItemType {
 // DMA --------------------------------------------------------------------------
 /*
 DMA channels:
-0:
-1:
+0: USB audio to the computer (D0FIFO) - defined below
+1: USB audio from the computer (D1FIFO) - defined below
 2: SD host - defined in sd_cfg.h
 3:
 4: OLED and CV SPI (if OLED supported) - defined below
@@ -106,6 +110,9 @@ DMA channels:
 14: MIDI UART RX timing - defined below
 15:
 */
+
+#define USB_AUDIO_TO_HOST_DMA_CHANNEL   0
+#define USB_AUDIO_FROM_HOST_DMA_CHANNEL 1
 
 #define OLED_SPI_DMA_CHANNEL 4
 

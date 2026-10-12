@@ -21,13 +21,16 @@
 // be unit tested.
 
 #include "io/usb/usb_audio_descriptor.h"
-#include "util/fixedpoint.h"
 #include <algorithm>
 #include <array>
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <span>
+
+#if defined(__ARM_NEON)
+#include <arm_neon.h>
+#endif
 
 namespace deluge::io::usb::audio {
 
@@ -59,9 +62,10 @@ public:
 		size_t write = writeIndex_.load(std::memory_order_relaxed);
 		size_t count = std::min(frames.size(), kCapacity - (write - readIndex_.load(std::memory_order_relaxed)));
 		std::atomic_signal_fence(std::memory_order_acquire); // Don't overwrite frames before seeing they're read
-		for (size_t i = 0; i < count; i++) {
-			buffer_[(write + i) & (kCapacity - 1)] = frames[i];
-		}
+		size_t start = write & (kCapacity - 1);
+		size_t first = std::min(count, kCapacity - start); // Up to the end of the buffer, then the rest from the start
+		std::copy_n(frames.begin(), first, &buffer_[start]);
+		std::copy_n(frames.begin() + first, count - first, &buffer_[0]);
 		std::atomic_signal_fence(std::memory_order_release); // Frames are written before the index says so
 		writeIndex_.store(write + count, std::memory_order_relaxed);
 		return count;
@@ -72,9 +76,10 @@ public:
 		size_t read = readIndex_.load(std::memory_order_relaxed);
 		size_t count = std::min(dest.size(), writeIndex_.load(std::memory_order_relaxed) - read);
 		std::atomic_signal_fence(std::memory_order_acquire); // Don't read frames before seeing they're written
-		for (size_t i = 0; i < count; i++) {
-			dest[i] = buffer_[(read + i) & (kCapacity - 1)];
-		}
+		size_t start = read & (kCapacity - 1);
+		size_t first = std::min(count, kCapacity - start); // Up to the end of the buffer, then the rest from the start
+		std::copy_n(&buffer_[start], first, dest.begin());
+		std::copy_n(&buffer_[0], count - first, dest.begin() + first);
 		std::atomic_signal_fence(std::memory_order_release); // Frames are read before the index frees them
 		readIndex_.store(read + count, std::memory_order_relaxed);
 		return count;
@@ -172,6 +177,110 @@ inline size_t unpackFrames24(const uint8_t* src, size_t numBytes, Frame* dest, s
  * from the computer's clock to the codec's, and Deluge -> computer the other way.
  *********************************************************************************************************************/
 
+namespace catmull_rom {
+
+// Between x1 and x2, t of the way (Q31). Catmull-Rom, with twice the usual coefficients to stay in integers and
+// evaluated by Horner's rule, where each multiply by t is a saturating doubling multiply returning the high half
+// (vqdmulh) - so it's by t in [0, 1) - and the last one is halved back to the usual coefficients.
+// Works on the samples' top 26 bits: the samples' 24 meaningful bits plus 2 for precision. Then no step can overflow -
+// k2, the biggest coefficient, is at most 12 * 2^25, and each partial sum stays under 2^30. The result is shifted back
+// up with saturation, which clips any overshoot.
+#if defined(__ARM_NEON)
+[[gnu::always_inline]] inline int32x4_t interpolate(int32x4_t x0, int32x4_t x1, int32x4_t x2, int32x4_t x3,
+                                                    int32x4_t t) {
+	int32x4_t a = vshrq_n_s32(x0, 6);
+	int32x4_t b = vshrq_n_s32(x1, 6);
+	int32x4_t c = vshrq_n_s32(x2, 6);
+	int32x4_t d = vshrq_n_s32(x3, 6);
+	int32x4_t k1 = vsubq_s32(c, a);
+	int32x4_t k2 = vsubq_s32(vaddq_s32(vmlsq_n_s32(vshlq_n_s32(a, 1), b, 5), vshlq_n_s32(c, 2)), d); // 2a-5b+4c-d
+	int32x4_t k3 = vmlaq_n_s32(vsubq_s32(d, a), vsubq_s32(b, c), 3);                                 // (d-a)+3(b-c)
+	int32x4_t y = vaddq_s32(k2, vqdmulhq_s32(k3, t));
+	y = vaddq_s32(k1, vqdmulhq_s32(y, t));
+	y = vsraq_n_s32(b, vqdmulhq_s32(y, t), 1);
+	return vqshlq_n_s32(y, 6);
+}
+#else
+// The same arithmetic one sample at a time, for unit tests on machines without NEON. No multiply here can saturate, as
+// t is never -1.
+[[gnu::always_inline]] inline int32_t interpolate(int32_t x0, int32_t x1, int32_t x2, int32_t x3, int32_t t) {
+	auto qdmulh = [](int32_t x, int32_t t) { return static_cast<int32_t>((int64_t{x} * t) >> 31); };
+	int32_t a = x0 >> 6;
+	int32_t b = x1 >> 6;
+	int32_t c = x2 >> 6;
+	int32_t d = x3 >> 6;
+	int32_t k1 = c - a;
+	int32_t k2 = 2 * a - 5 * b + 4 * c - d;
+	int32_t k3 = (d - a) + 3 * (b - c);
+	int32_t y = k2 + qdmulh(k3, t);
+	y = k1 + qdmulh(y, t);
+	y = b + (qdmulh(y, t) >> 1);
+	if (y >= (1 << 25)) {
+		return INT32_MAX;
+	}
+	if (y < -(1 << 25)) {
+		return INT32_MIN;
+	}
+	return y << 6;
+}
+#endif
+
+// The fraction of the way between source frames, Q31, from a 32.32 position
+[[gnu::always_inline]] inline int32_t fraction(uint64_t position) {
+	return static_cast<int32_t>(static_cast<uint32_t>(position) >> 1);
+}
+
+} // namespace catmull_rom
+
+// Interpolates numFrames frames of kChannels interleaved samples. Output frame k sits at source position
+// phase + k * increment (32.32, counting in frames from source), between frames (position >> 32) + 1 and + 2 - so
+// source has to reach ((phase + (numFrames - 1) * increment) >> 32) + 3.
+// All the channels share each frame's position, so they're done together, two frames at a time: each vector holds a
+// pair of channels from each of the two frames.
+template <size_t kChannels>
+void interpolateFrames(const int32_t* source, uint64_t phase, uint64_t increment, int32_t* out, size_t numFrames) {
+	static_assert(kChannels % 2 == 0, "channels are done in pairs");
+	using namespace catmull_rom;
+#if defined(__ARM_NEON)
+	auto renderPair = [](const int32_t* xa, const int32_t* xb, int32x4_t t, int32_t* outA, int32_t* outB) {
+		for (size_t c = 0; c < kChannels; c += 2) {
+			int32x4_t x0 = vcombine_s32(vld1_s32(&xa[c]), vld1_s32(&xb[c]));
+			int32x4_t x1 = vcombine_s32(vld1_s32(&xa[kChannels + c]), vld1_s32(&xb[kChannels + c]));
+			int32x4_t x2 = vcombine_s32(vld1_s32(&xa[2 * kChannels + c]), vld1_s32(&xb[2 * kChannels + c]));
+			int32x4_t x3 = vcombine_s32(vld1_s32(&xa[3 * kChannels + c]), vld1_s32(&xb[3 * kChannels + c]));
+			int32x4_t y = interpolate(x0, x1, x2, x3, t);
+			vst1_s32(&outA[c], vget_low_s32(y));
+			if (outB != nullptr) {
+				vst1_s32(&outB[c], vget_high_s32(y));
+			}
+		}
+	};
+
+	for (; numFrames >= 2; numFrames -= 2) {
+		uint64_t nextPhase = phase + increment;
+		int32x4_t t = vcombine_s32(vdup_n_s32(fraction(phase)), vdup_n_s32(fraction(nextPhase)));
+		renderPair(&source[(phase >> 32) * kChannels], &source[(nextPhase >> 32) * kChannels], t, out, &out[kChannels]);
+		phase = nextPhase + increment;
+		out += 2 * kChannels;
+	}
+	if (numFrames != 0) {
+		// The last one on its own
+		const int32_t* x = &source[(phase >> 32) * kChannels];
+		renderPair(x, x, vdupq_n_s32(fraction(phase)), out, nullptr);
+	}
+#else
+	for (size_t k = 0; k < numFrames; k++) {
+		const int32_t* x = &source[(phase >> 32) * kChannels];
+		int32_t t = fraction(phase);
+		for (size_t c = 0; c < kChannels; c++) {
+			out[c] = interpolate(x[c], x[kChannels + c], x[2 * kChannels + c], x[3 * kChannels + c], t);
+		}
+		phase += increment;
+		out += kChannels;
+	}
+#endif
+}
+
 // Resamples by a ratio very close to 1, with 4-point cubic (Catmull-Rom) interpolation.
 class DriftResampler {
 public:
@@ -218,48 +327,23 @@ public:
 				std::fill(&frames[kHistory + got], &frames[kHistory + numNew], Frame{0, 0});
 			}
 
-			uint64_t phase = phase_;
-			uint64_t increment = increment_;
-			for (size_t k = 0; k < numFrames; k++) {
-				const Frame* x = &frames[phase >> 32];
-				auto t = static_cast<int32_t>(static_cast<uint32_t>(phase) >> 1); // Q31
-				out[k].l = interpolate(x[0].l, x[1].l, x[2].l, x[3].l, t);
-				out[k].r = interpolate(x[0].r, x[1].r, x[2].r, x[3].r, t);
-				phase += increment;
-			}
+			interpolateFrames<kChannels>(reinterpret_cast<const int32_t*>(frames.data()), phase_, increment_,
+			                             reinterpret_cast<int32_t*>(out.data()), numFrames);
 
 			std::copy_n(&frames[numNew], kHistory, history_.begin());
-			phase_ = phase - (uint64_t{numNew} << 32);
+			phase_ += numFrames * increment_ - (uint64_t{numNew} << 32);
 			out = out.subspan(numFrames);
 		}
 		return !ranDry;
 	}
 
 private:
+	static constexpr size_t kChannels = sizeof(Frame) / sizeof(int32_t);
 	static constexpr size_t kHistory = 4;
 	// Rendering goes in chunks of up to this many frames, through a buffer of the source frames they need on the stack.
 	// That's room for an increment of up to 2, beyond which chunks just get smaller.
 	static constexpr size_t kMaxChunkFrames = 64;
 	static constexpr size_t kMaxChunkSource = 2 * kMaxChunkFrames;
-
-	// Between x1 and x2, t of the way (Q31). Catmull-Rom, with twice the usual coefficients to stay in integers and
-	// evaluated by Horner's rule, where each multiply by t also halves (smmul with t in Q31) and is doubled back.
-	// Works on the samples' top 26 bits: the samples' 24 meaningful bits plus 2 for precision. Then no step can
-	// overflow - k2, the biggest coefficient, is at most 12 * 2^25, and each partial sum stays under 2^30.
-	[[gnu::always_inline]] static int32_t interpolate(int32_t x0, int32_t x1, int32_t x2, int32_t x3, int32_t t) {
-		int32_t a = x0 >> 6;
-		int32_t b = x1 >> 6;
-		int32_t c = x2 >> 6;
-		int32_t d = x3 >> 6;
-		int32_t k1 = c - a;
-		int32_t k2 = 2 * a - 5 * b + 4 * c - d;
-		int32_t k3 = (d - a) + 3 * (b - c);
-		int32_t y = k2 + 2 * multiply_32x32_rshift32(k3, t);
-		y = k1 + 2 * multiply_32x32_rshift32(y, t);
-		y = b + multiply_32x32_rshift32(y, t); // Halving here gives the usual coefficients
-		y = std::clamp<int32_t>(y, -(1 << 25), (1 << 25) - 1);
-		return y << 6;
-	}
 
 	// The output lies between history_[1] and history_[2], phase_ (32.32) of the way
 	std::array<Frame, kHistory> history_{};
