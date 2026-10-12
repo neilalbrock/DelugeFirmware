@@ -30,6 +30,7 @@
  ***********************************************************************************************************************/
 #include "RZA1/usb/r_usb_basic/r_usb_basic_if.h"
 #include "RZA1/usb/r_usb_basic/src/driver/inc/r_usb_extern.h"
+#include "RZA1/usb/r_usb_basic/src/driver/inc/r_usb_pstd_hooks.h"
 #include "RZA1/usb/r_usb_basic/src/driver/inc/r_usb_typedef.h"
 #include "RZA1/usb/r_usb_basic/src/hw/inc/r_usb_bitdefine.h"
 #include "RZA1/usb/r_usb_basic/src/hw/inc/r_usb_reg_access.h"
@@ -878,6 +879,8 @@ void usb_pstd_brdy_pipe_process_rohan_midi(uint16_t bitsts)
     (void)bitsts;
 
     uint16_t pipe = USB_CFG_PMIDI_BULK_IN;
+    // The bulk endpoint's max packet size, which receives are armed for (see MidiEngine)
+    const int32_t packetSize = usb_pstd_is_high_speed() ? USB_MIDI_MAX_PACKET_SIZE : 64;
 
     // because this is polled theres no synchronization with the state of the bus so we have to handle some edge cases
 
@@ -913,21 +916,21 @@ void usb_pstd_brdy_pipe_process_rohan_midi(uint16_t bitsts)
         return;
     }
 
-    // How many bytes the armed 64-byte transfer actually received.
-    int32_t total = 64 - g_usb_data_cnt[pipe];
+    // How many bytes the armed one-packet transfer actually received.
+    int32_t total = packetSize - g_usb_data_cnt[pipe];
 
     // Handle edge case where a packet was arriving when we set the NAK back
-    while (total + 64 <= (int32_t)sizeof(connectedUSBMIDIDevices[0][0].receiveData))
+    while (total + packetSize <= (int32_t)sizeof(connectedUSBMIDIDevices[0][0].receiveData))
     {
-        // pretend there's at least 64 more available. The code in read_data_fast notes that
+        // pretend there's at least a packet more available. The code in read_data_fast notes that
         // reading in this case is still ok and this handles the edge case of a transmission finishing while the
         // copy is occuring. That's happening in DMA so a critical section wouldn't help
-        g_usb_data_cnt[pipe] = 64;
+        g_usb_data_cnt[pipe] = packetSize;
         if (USB_READEND != usb_read_data_fast_rohan(pipe))
         {
             break; // FIFO empty - the usual case
         }
-        total += 64 - g_usb_data_cnt[pipe];
+        total += packetSize - g_usb_data_cnt[pipe];
     }
 
     g_p_usb_pipe[pipe] = (usb_utr_t*)USB_NULL; // Is this necessary? Doesn't look like it

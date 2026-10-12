@@ -33,6 +33,10 @@ typedef void (*usb_pstd_isr_pipe_handler_t)(uint16_t pipe, uint16_t event);
 void usb_pstd_set_isr_pipe_handler(uint16_t pipe, usb_pstd_isr_pipe_handler_t handler);
 
 /* r_usb_pstdrequest.c */
+// Whether the computer and the Deluge settled on High Speed at the last bus reset (rather than Full Speed). Only
+// possible when the driver was opened for High Speed.
+uint8_t usb_pstd_is_high_speed(void);
+
 // Handler for class requests, so the Deluge can answer them itself (e.g. USB audio). Called at the start of the data
 // stage for requests that have one - it should then call usb_pstd_ctrl_read() or usb_pstd_ctrl_write() - and at the
 // status stage for requests that don't. Returns USB_TRUE if it dealt with the request, or USB_FALSE to STALL it.

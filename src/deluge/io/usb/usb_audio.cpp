@@ -134,6 +134,33 @@ bool dmaEnded(uint32_t channel) {
 }
 
 /*********************************************************************************************************************
+ * Isochronous errors
+ *
+ * An NRDY on an isochronous pipe means a packet was lost: a corrupted one (a CRC or bit stuffing error, which
+ * FRMNUM.CRCE flags), one that didn't come in its interval, or for the IN pipe, one the computer asked for before it
+ * was ready (FRMNUM.OVRN). They're counted for debugging - and at High Speed, corrupted packets would mean the
+ * connection isn't sound.
+ *********************************************************************************************************************/
+
+volatile uint32_t isoCrcErrors;
+volatile uint32_t isoOverruns;
+
+// ISR, for an NRDY on one of the pipes
+void countIsoError(volatile uint32_t& pipeErrors) {
+	pipeErrors = pipeErrors + 1;
+	uint16_t flags = USB200.FRMNUM & (USB_OVRN | USB_CRCE);
+	if (flags & USB_CRCE) {
+		isoCrcErrors = isoCrcErrors + 1;
+	}
+	if (flags & USB_OVRN) {
+		isoOverruns = isoOverruns + 1;
+	}
+	if (flags != 0) {
+		USB200.FRMNUM = (USB_OVRN | USB_CRCE) & ~flags; // Writing 0 clears a flag, and 1 leaves it
+	}
+}
+
+/*********************************************************************************************************************
  * Deluge -> computer
  *
  * The stream is synchronous: it runs on the computer's clock, at 44.1 frames per 1ms USB frame, so that as far as the
@@ -175,6 +202,7 @@ std::atomic<bool> toHostPrimed; // Whether enough has been queued up to start se
 volatile uint32_t toHostUnderruns;
 volatile uint32_t toHostDroppedFrames;
 volatile uint32_t toHostFifoNotReady;
+volatile uint32_t toHostIsoErrors; // NRDYs
 
 Frame toHostFrames[PacketSizer::kMaxFrames];
 uint8_t toHostPacket[USB_AUDIO_MAX_PACKET_SIZE] __attribute__((aligned(4)));
@@ -263,6 +291,10 @@ void toHostDmaEnded(uint32_t) {
 DEFINE_FPU_PRESERVING_INTERRUPT_HANDLER(toHostDmaEndedPreservingFpu, toHostDmaEnded);
 
 void toHostPipeISR(uint16_t pipe, uint16_t event) {
+	if (event == USB_INT_NRDY) {
+		countIsoError(toHostIsoErrors);
+		return;
+	}
 	if (event != USB_INT_BRDY) {
 		return;
 	}
@@ -307,6 +339,7 @@ void startStreamToHost() {
 
 	usb_pstd_set_isr_pipe_handler(pipe, &toHostPipeISR);
 	USB200.BRDYENB |= (1u << pipe);
+	USB200.NRDYENB |= (1u << pipe);
 	usb_cstd_set_buf(USB_NULL, pipe);
 }
 
@@ -316,6 +349,7 @@ void stopStreamToHost() {
 	streamingToHost = false;
 	usb_pstd_set_isr_pipe_handler(USB_CFG_PAUDIO_ISO_TO_HOST, nullptr);
 	USB200.BRDYENB &= ~(1u << USB_CFG_PAUDIO_ISO_TO_HOST);
+	USB200.NRDYENB &= ~(1u << USB_CFG_PAUDIO_ISO_TO_HOST);
 	stopDma(USB_AUDIO_TO_HOST_DMA_CHANNEL);
 	USB200.D0FIFOSEL = 0;
 }
@@ -354,6 +388,7 @@ uint32_t inputProcessedUpTo; // Frame of the codec's input buffer that's been pr
 volatile uint32_t fromHostUnderruns;
 volatile uint32_t fromHostDroppedFrames;
 volatile uint32_t fromHostFifoNotReady;
+volatile uint32_t fromHostIsoErrors; // NRDYs
 
 uint32_t fromHostPacket[(USB_AUDIO_MAX_PACKET_SIZE + 3) / 4]; // Whole words, as it's read 32 bits at a time
 Frame fromHostFrames[USB_AUDIO_MAX_FRAMES_PER_PACKET];
@@ -411,6 +446,10 @@ void readPacketFromHost() {
 DEFINE_FPU_PRESERVING_INTERRUPT_HANDLER(fromHostDmaEndedPreservingFpu, fromHostDmaEnded);
 
 void fromHostPipeISR(uint16_t pipe, uint16_t event) {
+	if (event == USB_INT_NRDY) {
+		countIsoError(fromHostIsoErrors);
+		return;
+	}
 	if (event != USB_INT_BRDY) {
 		return;
 	}
@@ -446,6 +485,7 @@ void startStreamFromHost() {
 
 	usb_pstd_set_isr_pipe_handler(pipe, &fromHostPipeISR);
 	USB200.BRDYENB |= (1u << pipe);
+	USB200.NRDYENB |= (1u << pipe);
 	usb_cstd_set_buf(USB_NULL, pipe);
 }
 
@@ -455,6 +495,7 @@ void stopStreamFromHost() {
 	streamingFromHost = false;
 	usb_pstd_set_isr_pipe_handler(USB_CFG_PAUDIO_ISO_FROM_HOST, nullptr);
 	USB200.BRDYENB &= ~(1u << USB_CFG_PAUDIO_ISO_FROM_HOST);
+	USB200.NRDYENB &= ~(1u << USB_CFG_PAUDIO_ISO_FROM_HOST);
 	stopDma(USB_AUDIO_FROM_HOST_DMA_CHANNEL);
 	USB200.D1FIFOSEL = 0;
 }

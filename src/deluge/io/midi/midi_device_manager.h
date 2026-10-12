@@ -34,6 +34,8 @@ struct MIDICableUSB;
 // NOTE: increasing this even more doesn't work.
 // Looks like a hardware limitation (maybe we more in FS mode)?
 #define MIDI_SEND_BUFFER_LEN_INNER 32
+// The biggest USB-MIDI bulk packet: 512 bytes when the Deluge is a High Speed peripheral, otherwise 64
+#define USB_MIDI_MAX_PACKET_SIZE 512
 // Seems to be the max for a hydrasynth on a usb hub? We should figure out how to find this from the device config but I
 // haven't seen anything below this yet. Widi bud's can do 3, both do fine at 16 without a hub involved
 #define MIDI_SEND_BUFFER_LEN_INNER_HOST 2
@@ -78,10 +80,11 @@ struct ConnectedUSBMIDIDevice {
 	uint8_t sq; // Only for connections as HOST
 	uint8_t canHaveMIDISent;
 	uint16_t numBytesReceived;
-	// Receive transfers are armed for one 64-byte packet at a time, but the peripheral-mode bulk pipe is
-	// double-buffered, so its BRDY handler can have to drain up to two packets (plus margin) in one go rather than
-	// dropping what the hardware already ACKed - see usb_pstd_brdy_pipe_process_rohan_midi().
-	__attribute__((aligned(8))) uint8_t receiveData[192];
+	// Receive transfers are armed for one packet at a time - 64 bytes, or 512 for a High Speed peripheral connection -
+	// but the peripheral-mode bulk pipe is double-buffered, so its BRDY handler can have to drain up to two packets
+	// (plus margin) in one go rather than dropping what the hardware already ACKed - see
+	// usb_pstd_brdy_pipe_process_rohan_midi().
+	__attribute__((aligned(8))) uint8_t receiveData[3 * USB_MIDI_MAX_PACKET_SIZE];
 
 	// This buffer is passed directly to the USB driver, and is limited to what the hardware allows
 	uint8_t dataSendingNow[MIDI_SEND_BUFFER_LEN_INNER * 4];

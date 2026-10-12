@@ -44,6 +44,7 @@ void usb_cstd_usb_task();
 
 #include "RZA1/system/iodefine.h"
 #include "RZA1/usb/r_usb_basic/r_usb_basic_if.h"
+#include "RZA1/usb/r_usb_basic/src/driver/inc/r_usb_pstd_hooks.h"
 #include "RZA1/usb/r_usb_basic/src/hw/inc/r_usb_bitdefine.h"
 #include "drivers/usb/userdef/r_usb_pmidi_config.h"
 
@@ -924,7 +925,8 @@ void MidiEngine::checkIncomingUsbMidi() {
 				if (aPeripheral) {
 
 					g_usb_midi_recv_utr[ip][0].keyword = USB_CFG_PMIDI_BULK_IN;
-					g_usb_midi_recv_utr[ip][0].tranlen = 64;
+					// One packet - which at High Speed can be up to 512 bytes
+					g_usb_midi_recv_utr[ip][0].tranlen = usb_pstd_is_high_speed() ? USB_MIDI_MAX_PACKET_SIZE : 64;
 
 					connectedUSBMIDIDevices[ip][0].currentlyWaitingToReceive = 1;
 

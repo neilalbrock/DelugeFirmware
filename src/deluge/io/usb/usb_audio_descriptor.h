@@ -75,6 +75,8 @@ extern "C" {
 
 extern uint8_t g_audio_device[];
 extern uint8_t g_audio_configuration[];
+extern uint8_t g_audio_configuration_hs[];
+extern uint8_t g_audio_qualifier[];
 extern uint16_t g_usb_pstd_eptbl_audio[];
 
 #ifdef __cplusplus

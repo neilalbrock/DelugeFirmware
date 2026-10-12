@@ -188,3 +188,48 @@ TEST(UsbAudioDescriptorTests, packetSizeFitsAStereoFrameAtTheSampleRate) {
 	CHECK(USB_AUDIO_MAX_PACKET_SIZE >= 45 * USB_AUDIO_BYTES_PER_FRAME);
 	CHECK_EQUAL(0, USB_AUDIO_MAX_PACKET_SIZE % USB_AUDIO_BYTES_PER_FRAME);
 }
+
+// The High Speed configuration is the Full Speed one with High Speed timings: the isochronous endpoints still every 1ms
+// (bInterval 4: every 2^3 microframes), and 512-byte bulk packets, which the pipes' buffers have room for
+TEST(UsbAudioDescriptorTests, highSpeedConfigurationDiffersOnlyInTimings) {
+	std::vector<Descriptor> full = walk(g_audio_configuration);
+	std::vector<Descriptor> high = walk(g_audio_configuration_hs);
+	CHECK_EQUAL(totalLength(g_audio_configuration), totalLength(g_audio_configuration_hs));
+	CHECK_EQUAL(full.size(), high.size());
+
+	size_t endpointIndex = 0;
+	for (size_t i = 0; i < full.size(); i++) {
+		const uint8_t* f = full[i].bytes;
+		const uint8_t* h = high[i].bytes;
+		CHECK_EQUAL(full[i].length(), high[i].length());
+		if (full[i].type() != kDescriptorTypeEndpoint) {
+			CHECK(std::memcmp(f, h, full[i].length()) == 0);
+			continue;
+		}
+
+		CHECK(std::memcmp(f, h, 4) == 0); // Through bmAttributes
+		uint16_t fullMaxPacketSize = f[4] | (f[5] << 8);
+		uint16_t highMaxPacketSize = h[4] | (h[5] << 8);
+		uint16_t bufferBytes = (((g_usb_pstd_eptbl_audio[endpointIndex * USB_EPL + 2] >> 10) & 0x1F) + 1) * 64;
+		if ((f[3] & 0x03) == 0x01) { // Isochronous
+			CHECK_EQUAL(1, f[6]);
+			CHECK_EQUAL(4, h[6]);
+			CHECK_EQUAL(fullMaxPacketSize, highMaxPacketSize);
+		}
+		else { // Bulk
+			CHECK_EQUAL(64, fullMaxPacketSize);
+			CHECK_EQUAL(512, highMaxPacketSize);
+			CHECK(highMaxPacketSize <= bufferBytes);
+		}
+		CHECK(std::memcmp(&f[7], &h[7], full[i].length() - 7) == 0); // Anything after bInterval
+		endpointIndex++;
+	}
+}
+
+TEST(UsbAudioDescriptorTests, deviceQualifierMatchesDevice) {
+	CHECK_EQUAL(10, g_audio_qualifier[0]);
+	CHECK_EQUAL(0x06, g_audio_qualifier[1]);                               // DEVICE_QUALIFIER
+	CHECK(std::memcmp(&g_audio_qualifier[2], &g_audio_device[2], 6) == 0); // bcdUSB through bMaxPacketSize0
+	CHECK_EQUAL(g_audio_device[17], g_audio_qualifier[8]);                 // bNumConfigurations
+	CHECK_EQUAL(0, g_audio_qualifier[9]);
+}

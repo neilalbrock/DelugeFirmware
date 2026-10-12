@@ -56,7 +56,10 @@
  * MidiStreaming Endpoint Descriptors - USBMidi spec 6.2.1
  * These endpoints are shared across all jacks
  */
-#define USB_MIDI_INTERFACE_DESCRIPTORS(interfaceNumber)                                                                \
+#define USB_MIDI_INTERFACE_DESCRIPTORS(interfaceNumber) USB_MIDI_INTERFACE_DESCRIPTORS_MAXP((interfaceNumber), 64)
+
+// The same, with the bulk endpoints' max packet size - 64 at Full Speed, 512 at High Speed (USB 2.0 5.8.3)
+#define USB_MIDI_INTERFACE_DESCRIPTORS_MAXP(interfaceNumber, maxPacketSize)                                            \
 	USB_ID_BLENGTH,        /*  0:bLength */                                                                            \
 	    USB_DT_INTERFACE,  /*  1:bDescriptorType */                                                                    \
 	    (interfaceNumber), /*  2:bInterfaceNumber */                                                                   \
@@ -137,31 +140,31 @@
 	    0x05,                             /* bDescriptorType = ENDPOINT */                                             \
 	    (uint8_t)(USB_EP_OUT | USB_EP2),  /* bEndpointAddress. D7 direction, low 4 addr */                             \
 	    0x02,                             /* bmAttributes (bulk) */                                                    \
-	    0x40, 0x00,                       /* wMaxPacketSize */                                                         \
-	    0x00,                             /* bInterval */                                                              \
-	    0x00,                             /* bRefresh */                                                               \
-	    0x00, /* bSynchAddress */         /* midi class specific bulk out */                                           \
-	    (uint8_t)(4 + NCABLES),           /* bLength - 4+ncables */                                                    \
-	    CS_ENDPOINT,                      /* bDescriptorType - CS_ENDPOINT */                                          \
-	    0x01,                             /* bDescriptorSubType - MS_GENERAL */                                        \
-	    0x03,                             /* bNumEmbMidiJack - number of MIDI IN jacks */                              \
-	    0x01,                             /* BaAssocJackID - ID of first associated jack */                            \
-	    0x03, 0x05,                       /* ID of last associated jack */                                             \
+	    (uint8_t)((maxPacketSize) & 0xFF), (uint8_t)((maxPacketSize) >> 8), /* wMaxPacketSize */                       \
+	    0x00,                                                               /* bInterval */                            \
+	    0x00,                                                               /* bRefresh */                             \
+	    0x00, /* bSynchAddress */                                           /* midi class specific bulk out */         \
+	    (uint8_t)(4 + NCABLES),                                             /* bLength - 4+ncables */                  \
+	    CS_ENDPOINT,                                                        /* bDescriptorType - CS_ENDPOINT */        \
+	    0x01,                                                               /* bDescriptorSubType - MS_GENERAL */      \
+	    0x03,       /* bNumEmbMidiJack - number of MIDI IN jacks */                                                    \
+	    0x01,       /* BaAssocJackID - ID of first associated jack */                                                  \
+	    0x03, 0x05, /* ID of last associated jack */                                                                   \
                                                                                                                        \
 	    /* USB standard bulk in - same fields as above, differences annotated */                                       \
-	    0x09,                           /* bLength */                                                                  \
-	    0x05,                           /* bDescriptor */                                                              \
-	    (uint8_t)(USB_EP_IN | USB_EP1), /* different address */                                                        \
-	    0x02,                           /* bmAttributes */                                                             \
-	    0x40, 0x00,                     /* wMaxPacketSize */                                                           \
-	    0x00,                           /* bInterval */                                                                \
-	    0x00,                           /* bRefresh */                                                                 \
-	    0x00, /* bSynchAddress */       /* midi specific bulk in */                                                    \
-	    (uint8_t)(4 + NCABLES),         /* bLength - 4+ncables */                                                      \
-	    CS_ENDPOINT,                    /* bDescriptorType - CS_ENDPOINT */                                            \
-	    0x01,                           /* bDescriptorSubtype */                                                       \
-	    0x03,                           /* bNumEmbMidiJack - number of MIDI OUT jacks */                               \
-	    0x02,                           /* BaAssocJackID - first associated jack */                                    \
-	    0x04, 0x06                      /* Last associated jack */
+	    0x09,                                                               /* bLength */                              \
+	    0x05,                                                               /* bDescriptor */                          \
+	    (uint8_t)(USB_EP_IN | USB_EP1),                                     /* different address */                    \
+	    0x02,                                                               /* bmAttributes */                         \
+	    (uint8_t)((maxPacketSize) & 0xFF), (uint8_t)((maxPacketSize) >> 8), /* wMaxPacketSize */                       \
+	    0x00,                                                               /* bInterval */                            \
+	    0x00,                                                               /* bRefresh */                             \
+	    0x00, /* bSynchAddress */                                           /* midi specific bulk in */                \
+	    (uint8_t)(4 + NCABLES),                                             /* bLength - 4+ncables */                  \
+	    CS_ENDPOINT,                                                        /* bDescriptorType - CS_ENDPOINT */        \
+	    0x01,                                                               /* bDescriptorSubtype */                   \
+	    0x03,      /* bNumEmbMidiJack - number of MIDI OUT jacks */                                                    \
+	    0x02,      /* BaAssocJackID - first associated jack */                                                         \
+	    0x04, 0x06 /* Last associated jack */
 
 extern uint8_t* g_midi_string_table[];

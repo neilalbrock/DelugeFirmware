@@ -70,6 +70,15 @@ void usb_pstd_set_isr_pipe_handler(uint16_t pipe, usb_pstd_isr_pipe_handler_t ha
     }
 }
 
+uint8_t usb_pstd_is_high_speed(void)
+{
+#if USB_CFG_USE_USBIP == USB_CFG_IP0
+    return (USB200.DVSTCTR0 & USB_RHST) == USB_HSMODE;
+#else
+    return (USB201.DVSTCTR0 & USB_RHST) == USB_HSMODE;
+#endif
+}
+
 // Calls the ISR handler for each pipe in bits that has one. Returns the bits left over for the PCD task.
 static uint16_t usb_pstd_dispatch_isr_pipes(uint16_t bits, uint16_t event)
 {
