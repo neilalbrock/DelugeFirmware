@@ -34,6 +34,8 @@
 #include "RZA1/usb/r_usb_basic/src/hw/inc/r_usb_bitdefine.h"
 #include "RZA1/usb/r_usb_basic/src/hw/inc/r_usb_reg_access.h"
 
+extern uint16_t g_usb_usbmode; /* USB mode HOST/PERI */
+
 #if defined(USB_CFG_HCDC_USE)
 #include "r_usb_hcdc_if.h"
 #endif /* defined(USB_CFG_PCDC_USE) */
@@ -1374,9 +1376,16 @@ void usb_send_start_rohan(usb_utr_t* ptr, uint16_t pipe, uint8_t const* data, in
                    // work.
 
         /* Enable Not Ready Interrupt */
-        hw_usb_set_nrdyenb(USB_NULL,
-            pipe); // Seems not necessary. Rohan. (Trying re-enabling now to fix that freeze I keep getting in
-                   // usb_cstd_chg_curpipe_rohan_fast()...)
+        // Host mode only. As a peripheral, a sending pipe raises NRDY for every IN token that finds nothing to send -
+        // and the computer polls the MIDI endpoint constantly, so once anything had been sent this cost tens of
+        // thousands of interrupts a second (~10% CPU), all of which the ISR just discards. As a host, NRDY only
+        // comes from errors and STALLs.
+        if (g_usb_usbmode == USB_HOST)
+        {
+            hw_usb_set_nrdyenb(USB_NULL,
+                pipe); // Seems not necessary. Rohan. (Trying re-enabling now to fix that freeze I keep getting in
+                       // usb_cstd_chg_curpipe_rohan_fast()...)
+        }
     }
 
     if (false)
