@@ -137,8 +137,9 @@ bool dmaEnded(uint32_t channel) {
  *
  * The stream is synchronous: it runs on the computer's clock, at 44.1 frames per 1ms USB frame, so that as far as the
  * computer is concerned both streams share one clock. The audio engine's output is on the codec's clock, so it's
- * resampled to match: feedOutputToHost() adds each block to toHostCodecRing, and toHostResampler turns as much of it
- * as it can into frames for toHostRing, with toHostServo steering the ratio to keep toHostRing's fill level steady.
+ * resampled to match: feedOutputToHost() adds each block to toHostCodecRing, and once a batch has built up there,
+ * toHostResampler turns as much of it as it can into frames for toHostRing, with toHostServo steering the ratio to keep
+ * toHostRing's fill level steady.
  *
  * The USB ISR takes frames out of toHostRing a packet at a time, whenever the pipe has a buffer free (BRDY) - which,
  * once both its buffers are full, is once per 1ms frame as the computer collects them. The DMA writes them through the
@@ -153,8 +154,15 @@ constexpr size_t kToHostPrimeFrames = kToHostTargetFrames - SSI_TX_BUFFER_NUM_SA
 // Frames only pile up beyond the dips and peaks if the computer stops collecting for a while
 constexpr size_t kToHostSlackFrames = 192;
 
-// Audio routine only: the codec's output, waiting to be resampled
+// The audio routine often outputs only a few frames at a time, and each pass of the resampler costs far more to set up
+// (and steer) than per frame, so it waits for this many. Like a block of SSI_TX_BUFFER_NUM_SAMPLES, it's within the
+// dips kToHostTargetFrames allows for.
+constexpr size_t kToHostResampleBatchFrames = 64;
+
+// Audio routine only: the codec's output, waiting to be resampled. Room for a batch that's not quite complete, plus a
+// whole block.
 FrameRing<2 * SSI_TX_BUFFER_NUM_SAMPLES> toHostCodecRing;
+static_assert(kToHostResampleBatchFrames - 1 + SSI_TX_BUFFER_NUM_SAMPLES <= 2 * SSI_TX_BUFFER_NUM_SAMPLES);
 DriftResampler toHostResampler;
 RateServo toHostServo{kToHostTargetFrames};
 bool toHostServoRunning;
@@ -664,6 +672,9 @@ void feedOutputToHost(std::span<const StereoSample> frames) {
 	}
 	size_t pushed = toHostCodecRing.push({reinterpret_cast<const Frame*>(frames.data()), frames.size()});
 	toHostDroppedFrames = toHostDroppedFrames + (frames.size() - pushed);
+	if (toHostCodecRing.size() < kToHostResampleBatchFrames) {
+		return;
+	}
 
 	// Only steer while the ISR is taking frames. Before that, toHostRing just fills up to where it starts.
 	bool primed = toHostPrimed.load(std::memory_order_relaxed);
