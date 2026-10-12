@@ -120,6 +120,34 @@ TEST(UsbAudioLatencyTests, onlySkipsWhenWellOverTarget) {
 	CHECK_EQUAL(100, (framesToSkipForLatency<200, 64>(300)));
 }
 
+TEST_GROUP(UsbAudioInputProcessingTests){};
+
+TEST(UsbAudioInputProcessingTests, nothingWhenWhatsNeededIsDone) {
+	// Processed to 500, the render needs up to 400 or exactly 500, captured to 600
+	CHECK_EQUAL(0, (inputFramesToProcess<2048>(500, 600, 400, 64)));
+	CHECK_EQUAL(0, (inputFramesToProcess<2048>(500, 600, 500, 64)));
+}
+
+TEST(UsbAudioInputProcessingTests, whatsNeededPlusABatchAsFarAsCaptured) {
+	// Needs up to 520: does that plus 64, to 584
+	CHECK_EQUAL(84, (inputFramesToProcess<2048>(500, 700, 520, 64)));
+	// Only captured to 550: stops there
+	CHECK_EQUAL(50, (inputFramesToProcess<2048>(500, 550, 520, 64)));
+}
+
+TEST(UsbAudioInputProcessingTests, everythingCapturedWhenNeededIsBeyondIt) {
+	CHECK_EQUAL(100, (inputFramesToProcess<2048>(500, 600, 610, 64)));
+}
+
+TEST(UsbAudioInputProcessingTests, wrapsAroundTheBuffer) {
+	// Processed to 2040, needs up to 10 (past the end), captured to 100: does 18 + 64 = 82
+	CHECK_EQUAL(82, (inputFramesToProcess<2048>(2040, 100, 10, 64)));
+	// Needs up to 2030, which is done
+	CHECK_EQUAL(0, (inputFramesToProcess<2048>(2040, 100, 2030, 64)));
+	// Needs beyond what's captured, across the end
+	CHECK_EQUAL(68, (inputFramesToProcess<2048>(2040, 60, 70, 64)));
+}
+
 TEST_GROUP(UsbAudioUnpackingTests){};
 
 TEST(UsbAudioUnpackingTests, roundTripsWithPacking) {

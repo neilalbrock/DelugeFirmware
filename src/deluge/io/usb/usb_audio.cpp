@@ -21,6 +21,7 @@
 #include "io/usb/usb_audio_descriptor.h"
 #include "io/usb/usb_audio_stream.h"
 #include "model/settings/runtime_feature_settings.h"
+#include "processing/engines/audio_engine.h"
 #include <algorithm>
 #include <arm_neon.h>
 #include <atomic>
@@ -325,15 +326,23 @@ void stopStreamToHost() {
 /*********************************************************************************************************************
  * Computer -> Deluge
  *
- * Each packet is read as it arrives (BRDY) into fromHostRing - by DMA, through the D1FIFO port. At the start of each
- * audio routine, processInputFromHost() takes the frames the codec has captured since last time - still in the codec's
- * input buffer, ahead of anything that reads them - and replaces them with, or mixes in, the computer's audio,
- * resampled from the computer's clock to the codec's. So everything that uses the input - monitoring, recording,
- * the input oscillator, live effects - gets it without knowing.
+ * Each packet is read as it arrives (BRDY) into fromHostRing - by DMA, through the D1FIFO port. Before each render,
+ * processInputFromHost() makes sure the frames of the codec's input buffer that the render will read have had the
+ * computer's audio put in place of what the codec captured, or mixed in, resampled from the computer's clock to the
+ * codec's. So everything that uses the input - monitoring, recording, the input oscillator, live effects - gets it
+ * without knowing.
+ *
+ * The audio routine often renders only a few frames at a time, and each pass of the resampler costs far more to set up
+ * than per frame, so whenever it's needed, it also processes up to a batch more of what the codec has captured - which
+ * then lasts the next several renders.
  *********************************************************************************************************************/
 
-// Enough in hand to ride out the audio routine taking frames in blocks, and the odd late packet
-constexpr size_t kFromHostTargetFrames = 320;
+// Processed beyond what each render needs, when there's any processing to do
+constexpr size_t kInputBatchFrames = 64;
+
+// Enough in hand to ride out the audio routine taking frames in blocks - of up to SSI_TX_BUFFER_NUM_SAMPLES, plus a
+// batch - and the odd late packet
+constexpr size_t kFromHostTargetFrames = 384;
 
 FrameRing<1024> fromHostRing;
 DriftResampler fromHostResampler;
@@ -621,7 +630,7 @@ void setExternalInputPluggedIn(bool pluggedIn) {
 	externalInputPluggedIn = pluggedIn;
 }
 
-void processInputFromHost() {
+void processInputFromHost(size_t numFramesToRead) {
 	if (!isInputFromHostSelected()) {
 		processingInput = false;
 		return;
@@ -629,8 +638,8 @@ void processInputFromHost() {
 
 	// The DMA's last few writes before the position it reports can still be on their way to memory - if we replaced
 	// those frames now, the codec's input would land on top afterwards. So stay a few frames back, as the audio
-	// engine's own read position does (see AudioEngine::init()). Everything reads from 128+ frames further back
-	// still, so it all gets processed in time.
+	// engine's own read position does (see AudioEngine::init()). Renders read from 128+ frames further back, so they
+	// only reach this close when rendering a whole SSI_TX_BUFFER_NUM_SAMPLES at the shortest of those distances.
 	constexpr uint32_t kDmaSettleFrames = 8;
 	uint32_t capturedUpTo = (codecInputFramePosition() - kDmaSettleFrames) & (SSI_RX_BUFFER_NUM_SAMPLES - 1);
 	if (!processingInput) {
@@ -640,12 +649,19 @@ void processInputFromHost() {
 		return;
 	}
 
+	// What the render will read, from AudioEngine::i2sRXBufferPos
+	constexpr uint32_t kFrameMask = SSI_RX_BUFFER_NUM_SAMPLES - 1;
+	uint32_t readFrom = (AudioEngine::i2sRXBufferPos - reinterpret_cast<uint32_t>(getRxBufferStart()))
+	                    / (NUM_MONO_INPUT_CHANNELS * sizeof(int32_t));
+	uint32_t neededUpTo = (readFrom + numFramesToRead) & kFrameMask;
+	size_t numFrames = inputFramesToProcess<SSI_RX_BUFFER_NUM_SAMPLES>(inputProcessedUpTo, capturedUpTo, neededUpTo,
+	                                                                   kInputBatchFrames);
+
 	// Mixing with the internal mic would just add room noise, so only mix when something's plugged in
 	bool replace = (inputSource() == RuntimeFeatureStateUsbAudioInput::Usb) || !externalInputPluggedIn;
 	// Only the codec's DMA writes to the buffer as well, and only to frames ahead of these, so it needn't be volatile
 	static_assert(NUM_MONO_INPUT_CHANNELS == 2, "the codec's input frames are stereo, like Frame");
 	auto* input = reinterpret_cast<Frame*>(const_cast<int32_t*>(getRxBufferStart()));
-	size_t numFrames = (capturedUpTo - inputProcessedUpTo) & (SSI_RX_BUFFER_NUM_SAMPLES - 1);
 
 	Frame block[SSI_TX_BUFFER_NUM_SAMPLES];
 	while (numFrames > 0) {

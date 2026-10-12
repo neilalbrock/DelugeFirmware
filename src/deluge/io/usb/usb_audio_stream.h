@@ -151,6 +151,25 @@ size_t framesToSkipForLatency(size_t framesQueued) {
 	return 0;
 }
 
+// How many frames of the codec's input buffer (kBufferFrames long) to process now, from processedUpTo on. Only what's
+// captured can be processed - up to capturedUpTo - and what a render needs has to be - up to neededUpTo. If neededUpTo
+// is already processed, that's nothing; if not, it's up to batchFrames beyond it, as far as is captured. Positions are
+// frames from the buffer's start. A neededUpTo beyond capturedUpTo means everything that's captured.
+template <size_t kBufferFrames>
+size_t inputFramesToProcess(uint32_t processedUpTo, uint32_t capturedUpTo, uint32_t neededUpTo, size_t batchFrames) {
+	static_assert((kBufferFrames & (kBufferFrames - 1)) == 0, "positions wrap with a mask");
+	constexpr uint32_t kMask = kBufferFrames - 1;
+	size_t backlog = (capturedUpTo - processedUpTo) & kMask; // Captured but not processed
+	size_t spare = (capturedUpTo - neededUpTo) & kMask;      // Captured beyond what's needed
+	if (spare > kBufferFrames / 2) {
+		spare = 0; // Needed reaches beyond what's captured
+	}
+	if (backlog <= spare) {
+		return 0;
+	}
+	return backlog - (spare > batchFrames ? spare - batchFrames : 0);
+}
+
 // Unpacks 3-byte little-endian samples from the computer into 32-bit ones with the 24 meaningful bits at the top, as
 // the codec gives them. Any partial frame at the end is ignored. Returns the number of frames.
 inline size_t unpackFrames24(const uint8_t* src, size_t numBytes, Frame* dest, size_t maxFrames) {

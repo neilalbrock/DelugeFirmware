@@ -766,9 +766,6 @@ bool calledFromScheduler = false;
 
 	GeneralMemoryAllocator::get().checkStack("AudioDriver::routine");
 
-	// Bring in audio from the computer, if it's the input (or part of it), before anything reads the input
-	deluge::io::usb::audio::processInputFromHost();
-
 	saddr = (uint32_t)(getTxBufferCurrentPlace());
 	uint32_t saddrPosAtStart = saddr >> (2 + NUM_MONO_OUTPUT_CHANNELS_MAGNITUDE);
 	size_t numSamples = ((uint32_t)(saddr - i2sTXBufferPos) >> (2 + NUM_MONO_OUTPUT_CHANNELS_MAGNITUDE))
@@ -808,6 +805,9 @@ bool calledFromScheduler = false;
 	tickSongFinalizeWindows(numSamples);
 
 	numSamplesLastTime = numSamples;
+
+	// Bring in audio from the computer, if it's the input (or part of it), before rendering reads the input
+	deluge::io::usb::audio::processInputFromHost(numSamples);
 
 	renderAudio(numSamples);
 

@@ -54,9 +54,10 @@ bool isInputFromHostSelected();
 // rather than mixing in the internal mic.
 void setExternalInputPluggedIn(bool pluggedIn);
 
-// Called by the audio engine at the start of each routine. Replaces the frames the codec has captured since last time
-// with the computer's audio, or mixes it in, per the USB Audio Input setting - before anything reads them.
-void processInputFromHost();
+// Called by the audio engine before each render, which reads numFramesToRead frames of input from i2sRXBufferPos.
+// Makes sure those frames have the computer's audio in place of what the codec captured, or mixed in, per the USB Audio
+// Input setting.
+void processInputFromHost(size_t numFramesToRead);
 
 } // namespace deluge::io::usb::audio
 #endif
