@@ -70,6 +70,8 @@ file(GLOB_RECURSE deluge_SOURCES
         # For USB audio descriptor tests
         ../../src/deluge/io/usb/usb_audio_descriptor.c
         ../../src/deluge/io/midi/r_usb_pmidi_descriptor.c
+        # For waveform peak math tests
+        ../../src/deluge/gui/waveform/waveform_peak_math.cpp
 )
 
 add_executable(UnitTests
@@ -94,6 +96,7 @@ add_executable(UnitTests
         iterance_migration_tests.cpp
         usb_audio_descriptor_tests.cpp
         usb_audio_stream_tests.cpp
+        waveform_peak_math_tests.cpp
 )
 add_test(NAME UnitTests
         COMMAND UnitTests)
