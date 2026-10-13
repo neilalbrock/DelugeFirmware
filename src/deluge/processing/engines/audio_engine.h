@@ -207,6 +207,10 @@ extern bool micPluggedIn;
 extern bool lineInPluggedIn;
 extern bool renderInStereo;
 extern uint32_t audioSampleTimer;
+// Latches true once enough samples have elapsed since power-on for the codec ADC to settle and input monitoring to
+// fade in. Until then, input monitoring (Looper/Sampler) is suppressed and then faded in, so the codec's power-on
+// transient isn't passed through to the output. See getInputMonitoringGain().
+extern bool inputMonitoringWarmedUp;
 extern bool mustUpdateReverbParamsBeforeNextRender;
 extern bool bypassCulling;
 extern uint32_t i2sTXBufferPos;
@@ -234,6 +238,9 @@ extern StereoFloatSample approxRMSLevel;
 extern AbsValueFollower envelopeFollower;
 extern TaskID routine_task_id;
 void feedReverbBackdoorForGrain(int index, q31_t value);
+/// Gain to apply to monitored codec input, `offset` samples into the buffer currently being rendered. 0 until the
+/// codec has settled after power-on, then ramps up to full scale.
+q31_t getInputMonitoringGain(uint32_t offset);
 
 /// returns whether a voice is allowed to start right now - otherwise it should be deferred to the next tick
 bool allowedToStartVoice();
@@ -241,10 +248,6 @@ bool allowedToStartVoice();
 /// Remove these gate channels from any output waiting to be sent by the MIDI/gate timer, because they've been
 /// superseded by a newer state which is being output now
 void cancelScheduledGates(uint8_t gateMask, const InterruptsDisabled&);
-/// Call before adding a MIDI clock to the output buffer. Returns false if a MIDI flush is already scheduled for the
-/// MIDI/gate timer (the clock would then go out early with it). Otherwise flushes anything already in the MIDI output
-/// buffer so the clock can be sent on its own at its own time.
-bool prepareToSendMIDIClock(const InterruptsDisabled&);
 /// Called from the MIDI/gate timer ISR. Sends any MIDI/gate output which is due and re-arms the timer for the rest
 void midiGateOutputTimerFired();
 } // namespace AudioEngine

@@ -72,6 +72,9 @@ file(GLOB_RECURSE deluge_SOURCES
         ../../src/deluge/io/midi/r_usb_pmidi_descriptor.c
         # For waveform peak math tests
         ../../src/deluge/gui/waveform/waveform_peak_math.cpp
+        # For MIDI message / queue tests
+        ../../src/deluge/model/midi/message.cpp
+        ../../src/deluge/io/midi/midi_queue.cpp
 )
 
 add_executable(UnitTests
@@ -97,6 +100,7 @@ add_executable(UnitTests
         usb_audio_descriptor_tests.cpp
         usb_audio_stream_tests.cpp
         waveform_peak_math_tests.cpp
+        midi_queue_tests.cpp
 )
 add_test(NAME UnitTests
         COMMAND UnitTests)
