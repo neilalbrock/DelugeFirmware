@@ -580,14 +580,14 @@ void ArpeggiatorBase::maybeSetupNewRatchet(ArpeggiatorSettings* settings) {
 		ratchetNotesMultiplier = getRandomWeighted2BitsAmount(settings->ratchetAmount);
 		ratchetNotesCount = 1 << ratchetNotesMultiplier;
 		if (settings->syncLevel == SyncLevel::SYNC_LEVEL_128TH) {
-			// If the sync level is 128th, we can't have a ratchet of more than 2 notes, so we set it to the minimum
-			ratchetNotesMultiplier = 1;
-			ratchetNotesCount = 2;
+			// If the sync level is 128th, we can't have a ratchet of more than 2 notes
+			ratchetNotesMultiplier = std::min(1_u32, ratchetNotesMultiplier);
+			ratchetNotesCount = 1 << ratchetNotesMultiplier;
 		}
 		else if (settings->syncLevel == SyncLevel::SYNC_LEVEL_64TH) {
 			// If the sync level is 64th, the maximum ratchet can be of 4 notes (8 not allowed)
-			ratchetNotesMultiplier = std::max(2_u32, ratchetNotesMultiplier);
-			ratchetNotesCount = std::max(4_u32, ratchetNotesCount);
+			ratchetNotesMultiplier = std::min(2_u32, ratchetNotesMultiplier);
+			ratchetNotesCount = 1 << ratchetNotesMultiplier;
 		}
 		if (ratchetNotesMultiplier == 0) {
 			// Ratchet probability evaluated to "no ratchet", so we update the status as if ratchet didn't happen
