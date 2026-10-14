@@ -1612,7 +1612,9 @@ ActionResult Browser::padAction(int32_t x, int32_t y, int32_t on) {
 					display->displayPopup(l10n::get(l10n::String::STRING_FOR_ERROR_FILE_NOT_FOUND));
 				}
 				if (favouritesManager.isEmpty(x)) {
-					if (!getCurrentFileItem()->isFolder) {
+					// Nothing to store if there's no current file (e.g. an empty folder) or we couldn't get its path
+					FileItem* currentFileItem = getCurrentFileItem();
+					if (error == Error::NONE && currentFileItem && !currentFileItem->isFolder) {
 						favouritesManager.setFavourite(x, FavouritesManager::favouriteDefaultColor, filePath.get());
 						favouritesChanged();
 					}
