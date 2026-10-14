@@ -359,6 +359,16 @@ gotError:
 
 				// Or if everything's fine and we're ready to write / copy...
 				else {
+					// If the copy fails part-way, don't leave a truncated file behind - the next save would take it for
+					// an earlier complete copy (FILE_ALREADY_EXISTS above) and keep it
+					auto abandonCopy = [&]() {
+						error = Error::UNSPECIFIED;
+						activeDeserializer->closeWriter();
+						(void)created.value().close();
+						f_unlink(destFilePath);
+						display->removeLoadingAnimation();
+						display->displayError(error);
+					};
 
 					// Copy
 					while (true) {
@@ -367,10 +377,7 @@ gotError:
 						                Cluster::size, &bytesRead);
 						if (result) {
 							D_PRINTLN("read fail");
-							error = Error::UNSPECIFIED;
-							activeDeserializer->closeWriter();
-							display->removeLoadingAnimation();
-							display->displayError(error);
+							abandonCopy();
 							return false;
 						}
 						if (!bytesRead) {
@@ -381,10 +388,7 @@ gotError:
 						    created.value().write({(std::byte*)activeDeserializer->fileClusterBuffer, bytesRead});
 						if (!written || written.value() != bytesRead) {
 							D_PRINTLN("write fail %d", result);
-							error = Error::UNSPECIFIED;
-							activeDeserializer->closeWriter();
-							display->removeLoadingAnimation();
-							display->displayError(error);
+							abandonCopy();
 							return false;
 						}
 
