@@ -1222,6 +1222,11 @@ NoteRow* InstrumentClip::createNewNoteRowForKit(ModelStackWithTimelineCounter* m
 		return nullptr;
 	}
 
+	if (atStart) {
+		// Undo history refers to kit NoteRows by index, and every existing row has just moved up one
+		actionLogger.deleteAllLogs();
+	}
+
 	ModelStackWithNoteRow* modelStackWithNoteRow = modelStack->addNoteRow(index, newNoteRow);
 
 	newNoteRow->setDrum(newDrum, (Kit*)output, modelStackWithNoteRow); // It might end up NULL. That's fine
