@@ -187,6 +187,9 @@ void TaskManager::ignoreForStats() {
 }
 
 Time TaskManager::getAverageRunTimeForCurrentTask() const {
+	if (currentID < 0) [[unlikely]] {
+		return Time{0};
+	}
 	auto currentTask = &list[currentID];
 	return currentTask->durationStats.average;
 }
@@ -203,6 +206,9 @@ Time TaskManager::getAverageRunTimeForTask(TaskID id) const {
 }
 
 void TaskManager::setNextRunTimeforCurrentTask(Time seconds) {
+	if (currentID < 0) [[unlikely]] {
+		return;
+	}
 	auto currentTask = &list[currentID];
 	currentTask->schedule.maxInterval = seconds;
 }
@@ -288,24 +294,29 @@ bool TaskManager::yield(RunCondition until, Time timeout, bool returnOnIdle) {
 #if !IN_UNIT_TESTS
 	GeneralMemoryAllocator::get().checkStack("ensure resizeable space");
 #endif
-	Task* yielding_task = &list[currentID];
-	yielding_task->yielded = true;
+	// No task, if we're being called from the scheduler itself (e.g. by a conditional task's condition)
+	Task* yielding_task = (currentID >= 0) ? &list[currentID] : nullptr;
 	auto time_now = getSecondsFromStart();
-	Time runtime = (time_now - yielding_task->lastCallTime);
-	cpuTime += runtime;
 	bool skip_timeout = timeout < Time(1 / 10000.);
-	yielding_task->lastFinishTime = time_now; // update this so it's in its back off window
-	Time start_time = yielding_task->lastCallTime;
-	// for now we first end this as if the task finished - might be advantageous to replace with a context switch later
-	if (yielding_task->removeAfterUse) {
-		yielding_task->state =
-		    State::WAITING_TO_END; // mark it as waiting so it won't be run again (block triggers recheck of condition)
-	}
-	if (countThisTask) {
-		if (runtime > Time(0.003)) {
-			D_PRINTLN("Task %s took too long before yielding: %.3fms", yielding_task->name, double(runtime) * 1000.);
+	if (yielding_task != nullptr) {
+		yielding_task->yielded = true;
+		Time runtime = (time_now - yielding_task->lastCallTime);
+		cpuTime += runtime;
+		yielding_task->lastFinishTime = time_now; // update this so it's in its back off window
+		Time start_time = yielding_task->lastCallTime;
+		// for now we first end this as if the task finished - might be advantageous to replace with a context switch
+		// later
+		if (yielding_task->removeAfterUse) {
+			yielding_task->state = State::WAITING_TO_END; // mark it as waiting so it won't be run again (block triggers
+			                                              // recheck of condition)
 		}
-		yielding_task->updateNextTimes(start_time, runtime, time_now);
+		if (countThisTask) {
+			if (runtime > Time(0.003)) {
+				D_PRINTLN("Task %s took too long before yielding: %.3fms", yielding_task->name,
+				          double(runtime) * 1000.);
+			}
+			yielding_task->updateNextTimes(start_time, runtime, time_now);
+		}
 	}
 
 	// continue the main loop. The yielding task is still on the stack but that should be fine
@@ -334,7 +345,9 @@ bool TaskManager::yield(RunCondition until, Time timeout, bool returnOnIdle) {
 	} while (!ret && (skip_timeout || getSecondsFromStart() < time_now + timeout));
 
 	auto finish_time = getSecondsFromStart();
-	yielding_task->lastCallTime = finish_time; // hack so it won't get called again immediately
+	if (yielding_task != nullptr) {
+		yielding_task->lastCallTime = finish_time; // hack so it won't get called again immediately
+	}
 
 	return ret;
 }
