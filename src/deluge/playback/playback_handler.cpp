@@ -152,10 +152,14 @@ void PlaybackHandler::routine() {
 	}
 
 	// If we're playing synced to analog clock input, auto-start mode, and there hasn't been a rising edge for a while,
-	// then stop
-	if (isExternalClockActive() && usingAnalogClockInput && analogClockInputAutoStart
-	    && (int32_t)(AudioEngine::audioSampleTimer - timeLastAnalogClockInputRisingEdge) > (kSampleRate >> 1)) {
-		endPlayback();
+	// then stop. "A while" is half a second, or three edges' worth if they're further apart than that - a slow clock at
+	// a low PPQN (e.g. quarter notes below 120 BPM) would otherwise stop and restart playback between every edge.
+	if (isExternalClockActive() && usingAnalogClockInput && analogClockInputAutoStart) {
+		int32_t timeout =
+		    std::max<int32_t>(kSampleRate >> 1, std::min<uint32_t>(timePerInputTickMovingAverage, INT32_MAX / 3) * 3);
+		if ((int32_t)(AudioEngine::audioSampleTimer - timeLastAnalogClockInputRisingEdge) > timeout) {
+			endPlayback();
+		}
 	}
 }
 
