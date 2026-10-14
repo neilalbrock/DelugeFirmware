@@ -17,6 +17,7 @@
 
 #include "usb_common.h"
 #include "io/midi/midi_engine.h"
+#include "io/midi/sysex.h"
 #include "timers_interrupts/timers_interrupts.h"
 
 void MIDICableUSB::connectedNow(int32_t midiDeviceNum) {
@@ -108,7 +109,10 @@ void MIDICableUSB::sendSysex(const uint8_t* data, int32_t len) {
 	// programs have not been updated yet, so if we get a SysEx request with 0x7D as the ID, we respond in-kind. This
 	// involves skipping the the first 5 bytes and sending 0xF0, 0x7D instead. Since the USB driver batches things in 3
 	// byte groups, we must include the first byte after the address in that first group.
-	if (developerSysexCodeReceived && (data[1] != 0x7D)) {
+	// Only rewrite our own messages - not universal ones (e.g. the identity reply) or other manufacturers' (e.g. Lumi)
+	bool isDelugeMessage = data[1] == SysEx::DELUGE_SYSEX_ID_BYTE0 && data[2] == SysEx::DELUGE_SYSEX_ID_BYTE1
+	                       && data[3] == SysEx::DELUGE_SYSEX_ID_BYTE2 && data[4] == SysEx::DELUGE_SYSEX_ID_BYTE3;
+	if (developerSysexCodeReceived && isDelugeMessage) {
 		// Since the message ends with 0xF7, we can assume that data[5] does exist.
 		// fake 0xF0, 0x7D, data[5] for first send
 		uint32_t packed = ((uint32_t)data[5] << 24) | 0x007DF004 | (portNumber << 4);
