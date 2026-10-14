@@ -168,8 +168,9 @@ void Debug::loadPacketReceived(uint8_t* data, int32_t len) {
 
 	unpack_7bit_to_8bit(load_buf + pos, size, data + 9, packed_size);
 
-	// Pad LED Progress Bar Step
-	uint32_t pad = (18 * 8 * pos) / (load_bufsize - 0xffff);
+	// Pad LED Progress Bar Step - one pad per 1/144th of the buffer, so it stays on the 18x8 grid
+	constexpr uint32_t kNumProgressPads = 18 * 8;
+	uint32_t pad = std::min<uint64_t>(kNumProgressPads - 1, (uint64_t)kNumProgressPads * pos / load_bufsize);
 	uint8_t col = pad % 18;
 	uint8_t row = pad / 18;
 	PadLEDs::image[row][col] = RGB((255 / 7) * row, 0, 255 - (255 / 7) * row);
@@ -201,6 +202,10 @@ void Debug::loadCheckAndRun(uint8_t* data, int32_t len) {
 	}
 
 	uint32_t code_file_size = fields[1];
+	if (code_file_size > load_bufsize) {
+		display->displayPopup(deluge::l10n::get(deluge::l10n::String::STRING_FOR_CHECKSUM_FAIL));
+		return;
+	}
 
 	uint32_t checksum = get_crc(load_buf, code_file_size);
 
