@@ -66,6 +66,9 @@ public:
 	UITimerManager();
 
 	void routine();
+
+	/// Set while routine() is called from part-way through reading a file, where nothing may leave the current UI
+	bool insideFileRead = false;
 	void setTimer(TimerName which, int32_t ms);
 	void setTimerSamples(TimerName which, int32_t samples);
 	void unsetTimer(TimerName which);

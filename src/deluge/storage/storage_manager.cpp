@@ -909,7 +909,9 @@ void FileReader::readDone() {
 	if (!(readCount & 63)) { // 511 bad. 255 almost fine. 127 almost always fine
 		AudioEngine::routineWithClusterLoading();
 
+		uiTimerManager.insideFileRead = true;
 		uiTimerManager.routine();
+		uiTimerManager.insideFileRead = false;
 
 		if (display->haveOLED()) {
 			oledRoutine();
