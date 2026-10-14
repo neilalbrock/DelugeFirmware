@@ -17,6 +17,7 @@
 
 #include "playback/playback_handler.h"
 #include "definitions_cxx.hpp"
+#include "extern.h"
 #include "gui/l10n/l10n.h"
 #include "gui/menu_item/sync_level.h"
 #include "gui/ui/audio_recorder.h"
@@ -188,6 +189,18 @@ void PlaybackHandler::slowRoutine() {
 
 		pendingGlobalMIDICommand = GlobalMIDICommand::NONE;
 	}
+}
+
+// Only called from the "playback slow routine" task, so never from inside another card operation
+void PlaybackHandler::actionPendingNextSong() {
+	if (!nextSongPending || currentlyAccessingCard || sdRoutineLock) {
+		return;
+	}
+	nextSongPending = false;
+	if (stemExport.processStarted) {
+		return; // It holds Clips and Outputs across yields
+	}
+	currentSong->loadNextSong();
 }
 
 void PlaybackHandler::playButtonPressed(int32_t buttonPressLatency) {
@@ -2931,7 +2944,9 @@ bool PlaybackHandler::tryGlobalMIDICommands(MIDICable& cable, int32_t channel, i
 				break;
 
 			case GlobalMIDICommand::NEXT_SONG:
-				currentSong->loadNextSong();
+				// Like undo / redo, don't do it here: MIDI is also read from routineForSD(), i.e. in the middle of card
+				// reads and writes (such as a song save), and loading a song from there deletes the song they're using
+				nextSongPending = true;
 				break;
 
 			case GlobalMIDICommand::SHIFT:
