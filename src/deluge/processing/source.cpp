@@ -252,6 +252,10 @@ OscType Source::getOscType() {
 // If setting to SAMPLE or WAVETABLE, you must call killAllVoices before this, because ranges is going to get
 // emptied.
 void Source::setOscType(OscType newType) {
+	// A DX7 source always has a patch - if there isn't the memory for one, keep the old type
+	if (newType == OscType::DX7 && ensureDxPatch() == nullptr) {
+		return;
+	}
 
 	int32_t multiRangeSize;
 	if (newType == OscType::SAMPLE) {
@@ -294,14 +298,15 @@ doChangeType:
 	}
 
 	oscType = newType;
-	if (oscType == OscType::DX7) {
-		ensureDxPatch();
-	}
 }
 
+// Returns nullptr if there isn't the memory for the DX engine or the patch.
 DxPatch* Source::ensureDxPatch() {
 	if (dxPatch == nullptr) {
-		dxPatch = getDxEngine()->newPatch();
+		DxEngine* engine = getDxEngine();
+		if (engine != nullptr) {
+			dxPatch = engine->newPatch();
+		}
 	}
 	return dxPatch;
 };

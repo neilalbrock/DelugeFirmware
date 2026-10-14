@@ -306,8 +306,7 @@ void Sound::setupAsBlankSynth(ParamManager* paramManager, bool is_dx) {
 	    getParamFromUserValue(params::LOCAL_ENV_0_DECAY, 20));
 	patchedParams->params[params::LOCAL_ENV_0_SUSTAIN].setCurrentValueBasicForSetup(2147483647);
 	if (is_dx) {
-		sources[0].oscType = OscType::DX7;
-		sources[0].ensureDxPatch(); // initializes DX engine if this is the first dx7patch
+		sources[0].setOscType(OscType::DX7); // initializes DX engine if this is the first dx7patch
 		// velocity is forwarded to dx7 engine, don't do master volume
 		paramManager->getPatchCableSet()->numPatchCables = 0;
 		patchedParams->params[params::LOCAL_ENV_0_RELEASE].setCurrentValueBasicForSetup(2147483647); // 30 ish
@@ -3397,16 +3396,25 @@ Error Sound::readSourceFromFile(Deserializer& reader, int32_t s, ParamManagerFor
 		}
 		else if (!strcmp(tagName, "dx7patch")) {
 			DxPatch* patch = source->ensureDxPatch();
+			if (patch == nullptr) {
+				return Error::INSUFFICIENT_RAM;
+			}
 			int len = reader.readTagOrAttributeValueHexBytes(patch->params, 156);
 			reader.exitTag("dx7patch");
 		}
 		else if (!strcmp(tagName, "dx7randomdetune")) {
 			DxPatch* patch = source->ensureDxPatch();
+			if (patch == nullptr) {
+				return Error::INSUFFICIENT_RAM;
+			}
 			patch->random_detune = reader.readTagOrAttributeValueInt();
 			reader.exitTag("dx7randomdetune");
 		}
 		else if (!strcmp(tagName, "dx7enginemode")) {
 			DxPatch* patch = source->ensureDxPatch();
+			if (patch == nullptr) {
+				return Error::INSUFFICIENT_RAM;
+			}
 			patch->setEngineMode(reader.readTagOrAttributeValueInt());
 			reader.exitTag("dx7enginemode");
 		}

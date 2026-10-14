@@ -98,6 +98,10 @@ void DxCartridge::loadPatch() {
 	}
 
 	DxPatch* patch = soundEditor.currentSource->ensureDxPatch();
+	if (patch == nullptr) {
+		display->displayError(Error::INSUFFICIENT_RAM);
+		return;
+	}
 	pd->unpackProgram(patch->params, currentValue);
 	soundEditor.currentSound->killAllVoices();
 	Instrument* instrument = getCurrentInstrument();
