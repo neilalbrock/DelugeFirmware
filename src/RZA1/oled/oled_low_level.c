@@ -38,18 +38,37 @@ void setupSPIInterrupts()
 // Priority CV channel: CV words bypass the OLED frame queue so gate timing isn't held
 // hostage by OLED refreshes on the shared SPI bus. A single latest-wins slot matches the queue's
 // previous coalescing of unsent CV words.
-volatile bool cvPriorityPending  = false;
-volatile uint32_t cvPriorityData = 0;
+// One slot per kind of DAC word - the control word (e.g. LIN), then each output channel - so an update for one channel
+// can't replace a still-unsent one for the other.
+#define NUM_CV_SLOTS 3
+volatile uint8_t cvPendingSlots = 0; // Bit per slot
+volatile uint32_t cvPendingData[NUM_CV_SLOTS];
+#define cvPriorityPending (cvPendingSlots != 0)
 
 void sendCVWord(uint32_t message);
 bool sendPriorityCVIfPending();
 
+// Channel words have 0b0011 in the top nibble and a bit per channel below it (see CVEngine::sendVoltageOut())
+static int cvSlotForMessage(uint32_t message)
+{
+    uint32_t command = message >> 24;
+    if ((command & 0xF0) == 0x30)
+    {
+        if (command & 1)
+            return 1;
+        if (command & 2)
+            return 2;
+    }
+    return 0;
+}
+
 void enqueueCVMessage(int channel, uint32_t message)
 {
     ENTER_CRITICAL_SECTION();
-    // Latest value wins (matches the queue's old coalescing of unsent CV words).
-    cvPriorityData    = message;
-    cvPriorityPending = true;
+    // Latest value wins per slot (matches the queue's old coalescing of unsent CV words).
+    int slot            = cvSlotForMessage(message);
+    cvPendingData[slot] = message;
+    cvPendingSlots |= (1 << slot);
     // If the bus is idle, kick it off now; otherwise it gets drained at the next inter-transfer
     // boundary, ahead of any queued OLED frames.
     if (!spiBusCurrentlySending)
@@ -194,10 +213,19 @@ bool sendPriorityCVIfPending()
     {
         return false;
     }
-    cvPriorityPending = false;
-    cv_sending        = true;
-    sendCVWord(cvPriorityData);
-    cvSent();
+    int slot = 0;
+    while (!(cvPendingSlots & (1 << slot)))
+    {
+        slot++;
+    }
+    cvPendingSlots &= ~(1 << slot);
+    cv_sending = true;
+    sendCVWord(cvPendingData[slot]);
+    // Gates waiting on CV wait for all of it - any other slots go out from cvSPITransferComplete()
+    if (!cvPriorityPending)
+    {
+        cvSent();
+    }
     return true;
 }
 
