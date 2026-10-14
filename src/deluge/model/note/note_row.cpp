@@ -2553,7 +2553,7 @@ storePendingNoteOn:
 					pendingNoteOnList->pendingNoteOns[pendingNoteOnList->count].noteRowId = modelStack->noteRowId;
 					pendingNoteOnList->pendingNoteOns[pendingNoteOnList->count].velocity = thisNote->getVelocity();
 					pendingNoteOnList->pendingNoteOns[pendingNoteOnList->count].probability =
-					    thisNote->getProbability();
+					    sanitizeProbability(thisNote->getProbability());
 					pendingNoteOnList->pendingNoteOns[pendingNoteOnList->count].iterance = thisNote->getIterance();
 					pendingNoteOnList->pendingNoteOns[pendingNoteOnList->count].fill = thisNote->getFill();
 					pendingNoteOnList->pendingNoteOns[pendingNoteOnList->count].sampleSyncLength =
@@ -3493,9 +3493,7 @@ useDefaultLift:
 				if (velocity == 0 || velocity > 127) {
 					velocity = 64;
 				}
-				if ((probability & 127) > kNumProbabilityValues || probability >= (kNumProbabilityValues | 128)) {
-					probability = kNumProbabilityValues;
-				}
+				probability = sanitizeProbability(probability);
 				if (fill < FillMode::OFF || fill > FillMode::FILL) {
 					fill = FillMode::OFF;
 				}

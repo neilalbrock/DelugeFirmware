@@ -34,6 +34,7 @@
 #include "hid/matrix/matrix_driver.h"
 #include "io/midi/device_specific/specific_midi_device.h"
 #include "io/midi/midi_engine.h"
+#include "io/midi/midi_follow.h"
 #include "memory/general_memory_allocator.h"
 #include "model/action/action_logger.h"
 #include "model/clip/audio_clip.h"
@@ -384,6 +385,11 @@ bool Song::ensureAtLeastOneSessionClip() {
 	}
 
 	void* memory = GeneralMemoryAllocator::get().allocMaxSpeed(sizeof(InstrumentClip));
+	if (!memory) {
+		// A song can't have no Clips, and there's no recovering from here - same as the other failures below
+		display->displayError(Error::INSUFFICIENT_RAM);
+		while (1) {}
+	}
 	InstrumentClip* firstClip = new (memory) InstrumentClip(this);
 
 	sessionClips.insertClipAtIndex(firstClip, 0);
@@ -1101,6 +1107,17 @@ Clip* Song::getSessionClipWithOutput(Output* output, int32_t requireSection, Cli
 }
 
 Clip* Song::getNextSessionClipWithOutput(int32_t offset, Output* output, Clip* prevClip) {
+	// A fast turn can deliver several detents at once. Take them one at a time, so each moves to the next matching Clip
+	// (or to NULL past either end) just as separate turns would - the single-step search below can't skip further.
+	int32_t direction = (offset < 0) ? -1 : 1;
+	Clip* clip = prevClip;
+	for (int32_t steps = std::abs(offset); steps > 0; steps--) {
+		clip = getNextSessionClipWithOutputOneStep(direction, output, clip);
+	}
+	return clip;
+}
+
+Clip* Song::getNextSessionClipWithOutputOneStep(int32_t offset, Output* output, Clip* prevClip) {
 
 	int32_t oldIndex = -1;
 	if (prevClip) {
@@ -3185,6 +3202,10 @@ void Song::deleteClipObject(Clip* clip, bool songBeingDestroyedToo, InstrumentRe
 			FREEZE_WITH_ERROR("E455");
 		}
 #endif
+
+		// Arrangement-only Clips get deleted without going through removeSessionClipLowLevel()
+		replaceClipInSessionMacros(clip, nullptr);
+		midiFollow.removeClip(clip);
 
 		char modelStackMemory[MODEL_STACK_MAX_SIZE];
 		ModelStackWithTimelineCounter* modelStack = setupModelStackWithTimelineCounter(modelStackMemory, this, clip);
@@ -5464,14 +5485,24 @@ void Song::removeSessionClipLowLevel(Clip* clip, int32_t clipIndex) {
 		clip->activeIfNoSolo = false;
 	}
 
-	for (int y = 0; y < 8; y++) {
-		auto& m = sessionMacros[y];
-		if (m.kind == CLIP_LAUNCH && m.clip == clip) {
-			m.kind = NO_MACRO;
-		}
-	}
+	replaceClipInSessionMacros(clip, nullptr);
 
 	sessionClips.deleteAtIndex(clipIndex);
+}
+
+// Points any clip-launch macros for oldClip at newClip instead, or clears them if newClip is null
+void Song::replaceClipInSessionMacros(Clip* oldClip, Clip* newClip) {
+	for (auto& m : sessionMacros) {
+		if (m.kind == CLIP_LAUNCH && m.clip == oldClip) {
+			if (newClip) {
+				m.clip = newClip;
+			}
+			else {
+				m.kind = NO_MACRO;
+				m.clip = nullptr;
+			}
+		}
+	}
 }
 
 // originalClipIndex is optional
@@ -5661,6 +5692,8 @@ void Song::swapClips(Clip* newClip, Clip* oldClip, int32_t clipIndex) {
 	if (oldClip == currentClip) {
 		currentClip = newClip;
 	}
+
+	replaceClipInSessionMacros(oldClip, newClip);
 
 	deleteClipObject(oldClip);
 }

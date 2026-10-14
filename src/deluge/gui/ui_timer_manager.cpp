@@ -17,6 +17,7 @@
 
 #include "gui/ui_timer_manager.h"
 #include "definitions_cxx.hpp"
+#include "extern.h"
 #include "gui/ui/keyboard/keyboard_screen.h"
 #include "gui/ui/sound_editor.h"
 #include "gui/views/automation_view.h"
@@ -160,6 +161,13 @@ void UITimerManager::routine() {
 					break;
 				}
 				case TimerName::BACK_MENU_EXIT: {
+					// A long press of BACK can come due in the middle of loading or saving (the press itself having
+					// been put off till the card routine ended), and leaving a browser, rename or editor UI from there
+					// pulls things out from under it. Wait till it's finished.
+					if (sdRoutineLock || currentlyAccessingCard || insideFileRead) {
+						timer.active = true;
+						break;
+					}
 					ActionResult result = getCurrentUI()->exitUI();
 					if (result == ActionResult::REMIND_ME_OUTSIDE_CARD_ROUTINE) {
 						timer.active = true;

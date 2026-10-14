@@ -19,6 +19,8 @@
 #include "definitions_cxx.hpp"
 #include "gui/l10n/l10n.h"
 #include "gui/ui/browser/browser.h"
+#include "gui/ui/keyboard/layout/in_key.h"
+#include "gui/ui/keyboard/layout/velocity_drums.h"
 #include "gui/ui/load/load_instrument_preset_ui.h"
 #include "gui/views/arranger_view.h"
 #include "gui/views/automation_view.h"
@@ -185,16 +187,28 @@ deleteClipAndGetOut:
 		goto deleteClipAndGetOut;
 	}
 
+	TimelineCounter* originalTimelineCounter = modelStack->getTimelineCounterAllowNull();
 	modelStack->setTimelineCounter(newClip);
 
 	for (int32_t i = 0; i < newClip->noteRows.getNumElements(); i++) {
 		NoteRow* noteRow = newClip->noteRows.getElement(i);
 		int32_t noteRowId = newClip->getNoteRowId(noteRow, i);
 		ModelStackWithNoteRow* modelStackWithNoteRow = modelStack->addNoteRow(noteRowId, noteRow);
-		Error error = noteRow->beenCloned(modelStackWithNoteRow, shouldFlattenReversing);
+		Error rowError = noteRow->beenCloned(modelStackWithNoteRow, shouldFlattenReversing);
 
 		// If that fails, we have to keep going, cos otherwise some NoteRows' NoteVector will be left pointing to stuff
 		// it shouldn't be
+		if (rowError != Error::NONE && error == Error::NONE) {
+			error = rowError;
+		}
+	}
+
+	// A NoteRow that couldn't be cloned has been left with no notes or params, which isn't playable (a kit row needs
+	// its patched params), so give up on the whole clone. Every NoteRow owns its own stuff by now, so it can be
+	// deleted.
+	if (error != Error::NONE) {
+		modelStack->setTimelineCounter(originalTimelineCounter);
+		goto deleteClipAndGetOut;
 	}
 
 	if (shouldFlattenReversing && newClip->sequenceDirectionMode == SequenceDirection::REVERSE) {
@@ -1220,6 +1234,11 @@ NoteRow* InstrumentClip::createNewNoteRowForKit(ModelStackWithTimelineCounter* m
 	NoteRow* newNoteRow = noteRows.insertNoteRowAtIndex(index);
 	if (!newNoteRow) {
 		return nullptr;
+	}
+
+	if (atStart) {
+		// Undo history refers to kit NoteRows by index, and every existing row has just moved up one
+		actionLogger.deleteAllLogs();
 	}
 
 	ModelStackWithNoteRow* modelStackWithNoteRow = modelStack->addNoteRow(index, newNoteRow);
@@ -2573,7 +2592,10 @@ someError:
 		}
 
 		else if (!strcmp(tagName, "keyboardRowInterval")) {
-			keyboardState.isomorphic.rowInterval = reader.readTagOrAttributeValueInt();
+			// The keyboard layouts size and index arrays with these, so keep them to the ranges the UI allows
+			keyboardState.isomorphic.rowInterval = std::clamp(
+			    reader.readTagOrAttributeValueInt(), deluge::gui::ui::keyboard::layout::kMinIsomorphicRowInterval,
+			    deluge::gui::ui::keyboard::layout::kMaxIsomorphicRowInterval);
 		}
 
 		else if (!strcmp(tagName, "drumsScrollOffset")) {
@@ -2581,7 +2603,9 @@ someError:
 		}
 
 		else if (!strcmp(tagName, "drumsZoomLevel")) {
-			keyboardState.drums.zoom_level = reader.readTagOrAttributeValueInt();
+			keyboardState.drums.zoom_level =
+			    std::clamp(reader.readTagOrAttributeValueInt(), deluge::gui::ui::keyboard::layout::k_min_zoom_level,
+			               deluge::gui::ui::keyboard::layout::k_max_zoom_level);
 		}
 
 		else if (!strcmp(tagName, "inKeyScrollOffset")) {
@@ -2589,7 +2613,9 @@ someError:
 		}
 
 		else if (!strcmp(tagName, "inKeyRowInterval")) {
-			keyboardState.inKey.rowInterval = reader.readTagOrAttributeValueInt();
+			keyboardState.inKey.rowInterval =
+			    std::clamp(reader.readTagOrAttributeValueInt(), deluge::gui::ui::keyboard::layout::kMinInKeyRowInterval,
+			               deluge::gui::ui::keyboard::layout::kMaxInKeyRowInterval);
 		}
 
 		else if (!strcmp(tagName, "crossScreenEditLevel")) {

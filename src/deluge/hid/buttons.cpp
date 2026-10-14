@@ -141,6 +141,11 @@ ActionResult buttonAction(deluge::hid::Button b, bool on, bool inCardRoutine) {
 	result = getCurrentUI()->buttonAction(b, on, inCardRoutine);
 
 	if (result == ActionResult::REMIND_ME_OUTSIDE_CARD_ROUTINE) {
+		if (b == BACK && on) {
+			// The press comes back once the card routine is over, and its release won't be read till then either, so
+			// time the long press from then
+			uiTimerManager.unsetTimer(TimerName::BACK_MENU_EXIT);
+		}
 		return ActionResult::REMIND_ME_OUTSIDE_CARD_ROUTINE;
 	}
 	else if (result == ActionResult::DEALT_WITH) {

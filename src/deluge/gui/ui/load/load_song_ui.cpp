@@ -255,8 +255,12 @@ void LoadSongUI::queueLoadNextSongIfAvailable(int8_t offset) {
 		// If another load is in progress, ignore this request
 		return;
 	}
-	if (fileIndexSelected == -1) {
-		// If no song is loaded/selected yet, we have nothing to do
+	if (currentSong->name.isEmpty()) {
+		// The song has never been saved or loaded, so it has no position in a folder to move on from
+		return;
+	}
+	if (getCurrentUI() != getRootUI()) {
+		// Another UI is open - possibly another Browser, which owns the shared file list we're about to rebuild
 		return;
 	}
 	doQueueLoadNextSongIfAvailable(offset);
@@ -264,8 +268,29 @@ void LoadSongUI::queueLoadNextSongIfAvailable(int8_t offset) {
 
 // This method actually executes the loading of next song (by offset)
 void LoadSongUI::doQueueLoadNextSongIfAvailable(int8_t offset) {
+	// The file list, selection and folder are static state shared by every Browser, and get emptied or replaced by
+	// clip creation and by any other browser, so they can't be trusted to still describe this song's folder. Re-read
+	// it and find the current song in it.
 	outputTypeToLoad = OutputType::NONE;
+	allowedFileExtensions = allowedFileExtensionsXML;
+	allowFoldersSharingNameWithFile = false;
 	currentDir.set(&currentSong->dirPath);
+
+	String searchFilename;
+	searchFilename.set(&currentSong->name);
+	if (!searchFilename.contains(".XML") && searchFilename.concatenate(".XML") != Error::NONE) {
+		return;
+	}
+	Error error = readFileItemsFromFolderAndMemory(nullptr, OutputType::NONE, filePrefix, searchFilename.get(), nullptr,
+	                                               true, Availability::ANY, CATALOG_SEARCH_BOTH);
+	if (error != Error::NONE || !fileItems.getNumElements()) {
+		fileIndexSelected = -1;
+		return;
+	}
+	fileIndexSelected = fileItems.search(searchFilename.get());
+	if (fileIndexSelected >= fileItems.getNumElements()) {
+		fileIndexSelected = fileItems.getNumElements() - 1;
+	}
 
 	int32_t currentFileIndexSelected = fileIndexSelected;
 
@@ -320,14 +345,19 @@ void LoadSongUI::performLoad() {
 		return;
 	}
 
+	Error error = StorageManager::openDelugeFile(currentFileItem, "song");
+	if (error != Error::NONE) {
+		// Nothing has been touched yet, so the current song (and its undo history) survives a file that won't open
+		display->displayError(error);
+		performingLoad = false;
+		return;
+	}
+
 	actionLogger.deleteAllLogs();
 
 	if (arrangement.hasPlaybackActive()) {
 		playbackHandler.switchToSession();
 	}
-	Error error;
-
-	error = StorageManager::openDelugeFile(currentFileItem, "song");
 
 	currentUIMode = UI_MODE_LOADING_SONG_ESSENTIAL_SAMPLES;
 	indicator_leds::setLedState(IndicatorLED::LOAD, false);

@@ -19,6 +19,7 @@
 #include "definitions_cxx.hpp"
 #include "hid/display/display.h"
 #include "io/debug/log.h"
+#include "io/midi/midi_follow.h"
 #include "memory/general_memory_allocator.h"
 #include "model/clip/audio_clip.h"
 #include "model/clip/clip_array.h"
@@ -42,6 +43,7 @@ ConsequenceClipExistence::ConsequenceClipExistence(Clip* newClip, ClipArray* new
 void ConsequenceClipExistence::prepareForDestruction(int32_t whichQueueActionIn, Song* song) {
 	if (whichQueueActionIn != util::to_underlying(type)) {
 		song->deleteBackedUpParamManagersForClip(clip);
+		midiFollow.removeClip(clip);
 
 #if ALPHA_OR_BETA_VERSION
 		if (clip->type == ClipType::AUDIO) {

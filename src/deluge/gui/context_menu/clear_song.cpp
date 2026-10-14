@@ -70,6 +70,20 @@ void ClearSong::focusRegained() {
 }
 
 bool ClearSong::acceptCurrentOption() {
+	// Make the new song before touching the old one, so running out of memory leaves everything as it was
+	void* songMemory = GeneralMemoryAllocator::get().allocMaxSpeed(sizeof(Song));
+	if (!songMemory) {
+		display->displayError(Error::INSUFFICIENT_RAM);
+		return false;
+	}
+	Song* newSong = new (songMemory) Song();
+	if (newSong->paramManager.setupUnpatched() != Error::NONE) {
+		newSong->~Song();
+		delugeDealloc(songMemory);
+		display->displayError(Error::INSUFFICIENT_RAM);
+		return false;
+	}
+
 	if (playbackHandler.playbackState
 	    && (playbackHandler.isInternalClockActive() || currentPlaybackMode == &arrangement)) {
 
@@ -86,9 +100,7 @@ bool ClearSong::acceptCurrentOption() {
 		AudioEngine::songSwapAboutToHappen();
 	}
 
-	void* songMemory = GeneralMemoryAllocator::get().allocMaxSpeed(sizeof(Song)); // TODO: error checking
-	preLoadedSong = new (songMemory) Song();
-	preLoadedSong->paramManager.setupUnpatched(); // TODO: error checking
+	preLoadedSong = newSong;
 	GlobalEffectable::initParams(&preLoadedSong->paramManager);
 	preLoadedSong->setupDefault();
 

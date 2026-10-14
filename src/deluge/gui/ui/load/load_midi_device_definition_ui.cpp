@@ -105,20 +105,16 @@ Error LoadMidiDeviceDefinitionUI::setupForLoadingMidiDeviceDefinition() {
 	else {
 		char const* fullPath = midiInstrument->deviceDefinitionFileName.get();
 
-		// locate last occurence of "/" in string
-		char* filename = strrchr((char*)fullPath, '/');
-
-		// lengths of full path
-		auto fullPathLength = strlen(fullPath);
-
-		// directory
-		char dir[sizeof(char) * fullPathLength + 1];
-
-		memset(dir, 0, sizeof(char) * fullPathLength + 1);
-		strncpy(dir, fullPath, fullPathLength - strlen(filename));
-
-		currentDir.set(dir);
-		searchFilename.set(++filename);
+		// The name comes from a song or preset file, so it might not have a folder in it at all
+		char const* slash = strrchr(fullPath, '/');
+		if (slash) {
+			currentDir.set(fullPath, slash - fullPath);
+			searchFilename.set(slash + 1);
+		}
+		else {
+			currentDir.set(MIDI_DEVICES_DEFINITION_DEFAULT_FOLDER);
+			searchFilename.set(fullPath);
+		}
 	}
 
 	if (!searchFilename.isEmpty()) {

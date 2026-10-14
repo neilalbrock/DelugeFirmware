@@ -83,10 +83,13 @@ void smSysex::noteFileIdUse(FILdata* fp) {
 	fp->LRUstamp = LRUcounter++;
 }
 
-// Returns the entry in the FILdata array for the given fid
+// Returns the entry in the FILdata array for the given fid, if that file is open
 FILdata* smSysex::entryForFID(uint32_t fid) {
+	if (fid == 0) {
+		return nullptr; // Never issued - it's what unused entries hold
+	}
 	for (int i = 0; i < MAX_OPEN_FILES; ++i) {
-		if (openFiles[i].fileID == fid) {
+		if (openFiles[i].fileOpen && openFiles[i].fileID == fid) {
 			return openFiles + i;
 		}
 	}
@@ -145,6 +148,8 @@ FILdata* smSysex::openFIL(const char* fPath, int forWrite, uint32_t* fsize, FRES
 		mode = FA_WRITE;
 		if (forWrite == 1)
 			mode |= FA_CREATE_ALWAYS;
+		else
+			mode |= FA_OPEN_ALWAYS; // Append: keep the existing contents, or create the file if it isn't there
 	}
 	FRESULT err = f_open(&fp->file, fPath, mode);
 	*eCode = err;
@@ -223,7 +228,7 @@ FRESULT smSysex::createPathDirectories(String& path, uint32_t date, uint32_t tim
 }
 
 void smSysex::openFile(MIDICable& cable, JsonDeserializer& reader) {
-	bool forWrite = false;
+	int32_t forWrite = 0; // 0 = read, 1 = write (create new), 2 = write (append)
 	String path;
 	int32_t rn = 0;
 	char const* tagName;
@@ -533,35 +538,41 @@ void smSysex::readBlock(MIDICable& cable, JsonDeserializer& reader) {
 	FILdata* fp = entryForFID(fid);
 	FRESULT errCode = FR_OK;
 
+	// Nothing gets sent back unless it was actually read from the file
+	uint32_t sizeRequested = size;
+	size = 0;
+	uint8_t* srcAddr = nullptr;
+
 	if (fp == nullptr) {
 		errCode = FRESULT::FR_NOT_ENABLED;
 	}
-	UINT actuallyRead = 0;
-	uint8_t* srcAddr = (uint8_t*)addr;
-	if (errCode == FRESULT::FR_OK) {
-		if (!readBlockBuffer && fp) {
+	else {
+		if (!readBlockBuffer) {
 			readBlockBuffer = (uint8_t*)GeneralMemoryAllocator::get().allocLowSpeed(blockBufferMax);
 		}
 
-		if (readBlockBuffer && fp) {
+		if (!readBlockBuffer) {
+			errCode = FRESULT::FR_NOT_ENOUGH_CORE;
+		}
+		else {
 			noteFileIdUse(fp);
 			// If file position requested is not what we expect, seek to requested.
 			if (fp->fPosition != addr) {
 				errCode = f_lseek(&fp->file, addr);
 			}
 			if (errCode == FRESULT::FR_OK) {
-				errCode = f_read(&fp->file, readBlockBuffer, size, &actuallyRead);
-				size = actuallyRead;
-				srcAddr = readBlockBuffer;
+				UINT actuallyRead = 0;
+				errCode = f_read(&fp->file, readBlockBuffer, sizeRequested, &actuallyRead);
+				if (errCode == FRESULT::FR_OK) {
+					size = actuallyRead;
+					srcAddr = readBlockBuffer;
+				}
 				fp->fPosition = addr + actuallyRead;
 			}
 			else {
 				D_PRINTLN("lseek issue: %d", errCode);
 			}
 		}
-	}
-	else {
-		size = 0;
 	}
 	startReply(jWriter, reader);
 	jWriter.writeOpeningTag("^read", false, true);
@@ -631,14 +642,21 @@ void smSysex::writeBlock(MIDICable& cable, JsonDeserializer& reader) {
 	if (reader.peekChar(&aChar) && aChar != 0) {
 		D_PRINTLN("Missing Separater error in writeBlock");
 	}
-	uint32_t decodedSize = decodeDataFromReader(reader, writeBlockBuffer, size);
-	D_PRINTLN("Decoded block len: %d", decodedSize);
-
 	// Here is where we actually write the buffer out.
 	FRESULT errCode = FRESULT::FR_OK;
 	FILdata* fp = entryForFID(fileId);
+	uint32_t decodedSize = 0;
 
-	if (fp == nullptr) {
+	if (!writeBlockBuffer) {
+		errCode = FRESULT::FR_NOT_ENOUGH_CORE;
+		size = 0;
+	}
+	else {
+		decodedSize = decodeDataFromReader(reader, writeBlockBuffer, size);
+		D_PRINTLN("Decoded block len: %d", decodedSize);
+	}
+
+	if (fp == nullptr && errCode == FRESULT::FR_OK) {
 		errCode = FRESULT::FR_NOT_ENABLED;
 	}
 	if (writeBlockBuffer && (fp != nullptr)) {

@@ -41,12 +41,16 @@ public:
 	void monophonicExpressionEvent(int32_t newValue, int32_t expressionDmiension) override;
 	bool setActiveClip(ModelStackWithTimelineCounter* modelStack, PgmChangeSend maySendMIDIPGMs) override;
 	void setupWithoutActiveClip(ModelStack* modelStack) override;
+	/// Moves one channel in the direction of offset, wrapping round. Callers search for a free channel by calling this
+	/// repeatedly until they come back to where they started, so it steps one at a time however big the encoder turn.
 	static int32_t navigateChannels(int oldChannel, int offset) {
-		auto newChannel = (oldChannel + offset) % kNumCVInstrumentChannels;
-		if (newChannel == -1) {
-			newChannel = kNumCVInstrumentChannels - 1;
+		if (offset == 0) {
+			return oldChannel;
 		}
-		return newChannel;
+		int32_t step = (offset > 0) ? 1 : kNumCVInstrumentChannels - 1;
+		int32_t current =
+		    ((oldChannel % kNumCVInstrumentChannels) + kNumCVInstrumentChannels) % kNumCVInstrumentChannels;
+		return (current + step) % kNumCVInstrumentChannels;
 	}
 	bool matchesPreset(OutputType otherType, int32_t otherChannel, int32_t channelSuffix, char const* otherName,
 	                   char const* otherPath) override {
@@ -65,7 +69,7 @@ public:
 
 	char const* getXMLTag() override { return "cvChannel"; }
 	void setChannel(int channel) override {
-		if (channel <= both) {
+		if (channel >= 0 && channel <= both) {
 			NonAudioInstrument::setChannel(channel);
 			setMode(static_cast<CVInstrumentMode>(channel));
 		}

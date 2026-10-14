@@ -61,7 +61,7 @@ static bool openFile(std::string_view path, DX7Cartridge* data) {
 		return false;
 	});
 
-	std::span<std::byte> readbuffer = D_TRY_CATCH(file.read({buffer.get(), filesize}), error, {
+	std::span<std::byte> readbuffer = D_TRY_CATCH(file.read({buffer.get(), (size_t)readsize}), error, {
 		return false; //
 	});
 
@@ -98,6 +98,10 @@ void DxCartridge::loadPatch() {
 	}
 
 	DxPatch* patch = soundEditor.currentSource->ensureDxPatch();
+	if (patch == nullptr) {
+		display->displayError(Error::INSUFFICIENT_RAM);
+		return;
+	}
 	pd->unpackProgram(patch->params, currentValue);
 	soundEditor.currentSound->killAllVoices();
 	Instrument* instrument = getCurrentInstrument();

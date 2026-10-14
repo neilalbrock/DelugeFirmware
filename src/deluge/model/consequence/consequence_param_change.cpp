@@ -17,7 +17,9 @@
 
 #include "model/consequence/consequence_param_change.h"
 #include "definitions_cxx.hpp"
+#include "model/clip/instrument_clip.h"
 #include "model/consequence/consequence.h"
+#include "model/note/note_row.h"
 #include "modulation/params/param_collection.h"
 #include "modulation/params/param_node_vector.h"
 #include "util/functions.h"
@@ -26,6 +28,10 @@
 ConsequenceParamChange::ConsequenceParamChange(ModelStackWithAutoParam const* modelStack, bool stealData) {
 	type = Consequence::PARAM_CHANGE;
 	memcpy(modelStackMemory, modelStack, sizeof(ModelStackWithParamId));
+
+	NoteRow* noteRow = modelStack->getNoteRowAllowNull();
+	paramManagerIsNoteRows = (noteRow && modelStack->paramManager == &noteRow->paramManager);
+	summaryIndex = paramManagerIsNoteRows ? (modelStack->summary - modelStack->paramManager->summaries) : 0;
 
 	state.value = modelStack->autoParam->currentValue;
 
@@ -45,6 +51,24 @@ Error ConsequenceParamChange::revert(TimeType time, ModelStack* modelStackWithSo
 	// We only actually store one state at a time - either the before, or the after. As we revert in either direction,
 	// we swap our stored state with that of the param in question - like, actually swap the pointer to the
 	// ParamNodeVector, so it's real efficient!
+
+	if (paramManagerIsNoteRows) {
+		// The NoteRow (with its ParamManager and summaries inside it) may have moved since we were made, so find it
+		// again by id
+		TimelineCounter* timelineCounter = modelStack.getTimelineCounterAllowNull();
+		NoteRow* noteRow =
+		    timelineCounter ? ((InstrumentClip*)timelineCounter)->getNoteRowFromId(modelStack.noteRowId) : nullptr;
+		if (!noteRow) {
+			return Error::BUG;
+		}
+		ParamCollectionSummary* summary = &noteRow->paramManager.summaries[summaryIndex];
+		if (summary->paramCollection != modelStack.paramCollection) {
+			return Error::BUG; // Whatever has that id now isn't the NoteRow this was recorded for
+		}
+		modelStack.setNoteRow(noteRow);
+		modelStack.paramManager = &noteRow->paramManager;
+		modelStack.summary = summary;
+	}
 
 	modelStack.paramCollection->remotelySwapParamState(&state, &modelStack);
 

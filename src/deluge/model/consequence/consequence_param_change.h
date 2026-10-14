@@ -29,7 +29,11 @@ public:
 
 	union {
 		char modelStackMemory[MODEL_STACK_MAX_SIZE];
-		ModelStackWithParamId modelStack; // TODO: yikes, is this safe? What about NoteRow pointers etc?
+		// The NoteRow, ParamManager and summary pointers in here go stale if the param belongs to a NoteRow, because
+		// NoteRows move whenever one is added or removed. revert() finds the NoteRow again by its id in that case.
+		ModelStackWithParamId modelStack;
 	};
 	AutoParamState state;
+	bool paramManagerIsNoteRows;
+	int8_t summaryIndex;
 };

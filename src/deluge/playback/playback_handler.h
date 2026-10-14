@@ -81,6 +81,7 @@ public:
 	int32_t getActualArrangementRecordPos();
 	int32_t getArrangementRecordPosAtLastActionedSwungTick();
 	void slowRoutine();
+	void actionPendingNextSong();
 	void scheduleSwungTickFromExternalClock();
 	int32_t getNumSwungTicksInSinceLastTimerTick(uint32_t* timeRemainder = nullptr);
 	int32_t getNumSwungTicksInSinceLastActionedSwungTick(uint32_t* timeRemainder = nullptr);
@@ -157,6 +158,7 @@ public:
 	bool analogClockInputAutoStart;
 
 	bool songSwapShouldPreserveTempo;
+	bool nextSongPending = false;
 
 	// User options
 	bool metronomeOn;

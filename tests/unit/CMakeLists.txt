@@ -101,6 +101,7 @@ add_executable(UnitTests
         usb_audio_stream_tests.cpp
         waveform_peak_math_tests.cpp
         midi_queue_tests.cpp
+        note_probability_tests.cpp
 )
 add_test(NAME UnitTests
         COMMAND UnitTests)

@@ -69,6 +69,9 @@ public:
 		}
 
 		soundEditor.currentSound->sources[sourceId_].setOscType(newValue);
+		if (soundEditor.currentSound->sources[sourceId_].oscType != newValue) {
+			display->displayError(Error::INSUFFICIENT_RAM); // No memory for the DX7 engine
+		}
 
 		if (oldValue == OscType::SQUARE || newValue == OscType::SQUARE) {
 			soundEditor.currentSound->setupPatchingForAllParamManagers(currentSong);

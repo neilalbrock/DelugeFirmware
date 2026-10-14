@@ -178,6 +178,7 @@ public:
 	Instrument* getNonAudioInstrumentToSwitchTo(OutputType newOutputType, Availability availabilityRequirement,
 	                                            int16_t newSlot, int8_t newSubSlot, bool* instrumentWasAlreadyInSong);
 	void removeSessionClipLowLevel(Clip* clip, int32_t clipIndex);
+	void replaceClipInSessionMacros(Clip* oldClip, Clip* newClip);
 	void changeSwingInterval(int32_t newValue);
 	int32_t convertSyncLevelFromFileValueToInternalValue(int32_t fileValue);
 	int32_t convertSyncLevelFromInternalValueToFileValue(int32_t internalValue);
@@ -293,6 +294,7 @@ public:
 	uint32_t getTimePerTimerTickRounded();
 	int32_t getNumOutputs();
 	Clip* getNextSessionClipWithOutput(int32_t offset, Output* output, Clip* prevClip);
+	Clip* getNextSessionClipWithOutputOneStep(int32_t offset, Output* output, Clip* prevClip);
 	bool anyClipsSoloing;
 
 	ParamManager* getBackedUpParamManagerForExactClip(ModControllableAudio* modControllable, Clip* clip,

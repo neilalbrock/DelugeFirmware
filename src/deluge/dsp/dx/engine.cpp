@@ -35,6 +35,9 @@ static void init_engine(void) {
 	// get ourselves an aligned pointer to use placement new with
 	// todo: this should be a part of the allocator but not sure what the api should look like, easy bugfix for now
 	void* engineMem = allocMaxSpeed(sizeof(DxEngine) + alignof(DxEngine) - 1);
+	if (engineMem == nullptr) {
+		return; // dxEngine stays null, so the next call tries again
+	}
 	engineMem = (void*)((((intptr_t)engineMem) + alignof(DxEngine) - 1) & -alignof(DxEngine));
 	dxEngine = new (engineMem) DxEngine();
 
@@ -58,10 +61,14 @@ void DxEngine::dxVoiceUnassigned(gsl::owner<DxVoice*> dxVoice) {
 
 DxPatch* DxEngine::newPatch(void) {
 	void* memory = allocLowSpeed(sizeof(DxPatch));
+	if (memory == nullptr) {
+		return nullptr;
+	}
 	return new (memory) DxPatch;
 }
 
 // TODO: static initialization should be allowed.
+// Returns nullptr if there isn't the memory to set the engine up.
 DxEngine* getDxEngine() {
 	if (dxEngine == nullptr) {
 		init_engine();

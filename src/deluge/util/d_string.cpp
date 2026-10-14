@@ -239,10 +239,10 @@ Error String::concatenateAtPos(char const* newChars, int32_t pos, int32_t newCha
 	int32_t extraBytesNeeded;
 	bool deallocateAfter = true;
 
-	// If additional reasons, we definitely have to allocate afresh
+	// If additional reasons, we definitely have to allocate afresh. Our claim on the shared memory is only dropped once
+	// that allocation has succeeded, so a failure leaves us still (correctly) holding it.
 	if (oldNumReasons > 1) {
 		deallocateAfter = false;
-		setNumReasons(oldNumReasons - 1);
 		goto allocateNewMemory;
 	}
 
@@ -282,6 +282,9 @@ allocateNewMemory:
 
 			if (deallocateAfter) {
 				delugeDealloc(stringMemory - 4);
+			}
+			else {
+				setNumReasons(oldNumReasons - 1);
 			}
 			stringMemory = newStringMemory;
 			setNumReasons(1);

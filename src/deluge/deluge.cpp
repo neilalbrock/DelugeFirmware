@@ -591,8 +591,12 @@ void registerTasks() {
 	addRepeatingTask([]() { audioRecorder.slowRoutine(); }, p++, 0.01, 0.09, 0.1, "audio recorder slow",
 	                 RESOURCE_SD | RESOURCE_SD_ROUTINE);
 	// formerly part of cluster loading (why? no idea), actions undo/redo midi commands
-	addRepeatingTask([]() { playbackHandler.slowRoutine(); }, p++, 0.01, 0.09, 0.1, "playback slow routine",
-	                 RESOURCE_SD);
+	addRepeatingTask(
+	    []() {
+		    playbackHandler.slowRoutine();
+		    playbackHandler.actionPendingNextSong();
+	    },
+	    p++, 0.01, 0.09, 0.1, "playback slow routine", RESOURCE_SD);
 	// 31-39: Idle priority (40 for dyn tasks)
 	p = 31;
 	addRepeatingTask(&(PIC::flush), p++, 0.001, 0.001, 0.02, "PIC flush", RESOURCE_NONE);
@@ -1058,6 +1062,7 @@ void deleteOldSongBeforeLoadingNew() {
 	view.activeModControllableModelStack.modControllable = nullptr;
 	view.activeModControllableModelStack.setTimelineCounter(nullptr);
 	view.activeModControllableModelStack.paramManager = nullptr;
+	midiFollow.clearStoredClips(); // They're all about to go
 
 	Song* toDelete = currentSong;
 	currentSong = nullptr;
