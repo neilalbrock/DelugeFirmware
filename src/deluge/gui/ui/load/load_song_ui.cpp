@@ -345,14 +345,19 @@ void LoadSongUI::performLoad() {
 		return;
 	}
 
+	Error error = StorageManager::openDelugeFile(currentFileItem, "song");
+	if (error != Error::NONE) {
+		// Nothing has been touched yet, so the current song (and its undo history) survives a file that won't open
+		display->displayError(error);
+		performingLoad = false;
+		return;
+	}
+
 	actionLogger.deleteAllLogs();
 
 	if (arrangement.hasPlaybackActive()) {
 		playbackHandler.switchToSession();
 	}
-	Error error;
-
-	error = StorageManager::openDelugeFile(currentFileItem, "song");
 
 	currentUIMode = UI_MODE_LOADING_SONG_ESSENTIAL_SAMPLES;
 	indicator_leds::setLedState(IndicatorLED::LOAD, false);
