@@ -498,6 +498,12 @@ bool PatchCableSet::patchCableIsUsable(uint8_t c, ModelStackWithThreeMainThings 
 
 	int32_t p = ourDescriptor->getJustTheParam();
 
+	// Files can name any param as a destination, including unpatched ones (UNPATCHED_START and up), which the patcher
+	// would index its patched-param arrays with
+	if (p >= params::kNumParams) {
+		return false;
+	}
+
 	// If a range-adjusting cable, we'll go by whether the cable that it adjusts is allowed. This is nearly perfect and
 	// will eliminate some stuff now. And our caller will do a further pass to check that the corresponding
 	// range-adjust*ed* cable actually exists.
