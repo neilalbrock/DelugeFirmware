@@ -750,10 +750,10 @@ void readSettings() {
 		gui::menu_item::fillColourMenu.value = static_cast<gui::menu_item::Colour::Option>(buffer[165]);
 	}
 	if (buffer[166] >= gui::menu_item::kNumPadColours) {
-		gui::menu_item::fillColourMenu.value = gui::menu_item::Colour::MAGENTA;
+		gui::menu_item::onceColourMenu.value = gui::menu_item::Colour::MAGENTA;
 	}
 	else {
-		gui::menu_item::fillColourMenu.value = static_cast<gui::menu_item::Colour::Option>(buffer[166]);
+		gui::menu_item::onceColourMenu.value = static_cast<gui::menu_item::Colour::Option>(buffer[166]);
 	}
 	if (gui::menu_item::fillColourMenu.value == gui::menu_item::Colour::RED
 	    && gui::menu_item::onceColourMenu.value == gui::menu_item::Colour::RED) {
