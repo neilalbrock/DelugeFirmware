@@ -1681,7 +1681,7 @@ ramError:
 								Iterance iterance;
 								fill = hexToIntFixedLength(&hexChars[26], 2);
 								iterance = Iterance::fromInt(hexToIntFixedLength(&hexChars[22], 4));
-								probability = hexToIntFixedLength(&hexChars[20], 2);
+								probability = sanitizeProbability(hexToIntFixedLength(&hexChars[20], 2));
 								lift = hexToIntFixedLength(&hexChars[18], 2);
 								if (lift == 0 || lift > 127) {
 									lift = kDefaultLiftValue;

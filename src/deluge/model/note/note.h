@@ -17,9 +17,21 @@
 
 #pragma once
 
+#include "definitions_cxx.hpp"
 #include "model/iterance/iterance.h"
 #include "model/positionable.h"
 #include <cstdint>
+
+/// A note's probability is 1 to kNumProbabilityValues (100%), optionally with the 128 "follow previous" flag, which
+/// can't go with 100%. Playback indexes arrays with it, so anything else (e.g. from a damaged file) becomes 100%.
+inline int32_t sanitizeProbability(int32_t probability) {
+	int32_t value = probability & 127;
+	if (probability < 0 || value == 0 || value > kNumProbabilityValues
+	    || probability >= (kNumProbabilityValues | 128)) {
+		return kNumProbabilityValues;
+	}
+	return probability;
+}
 
 class Note : public Positionable {
 public:

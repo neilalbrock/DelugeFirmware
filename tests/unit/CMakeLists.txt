@@ -96,6 +96,7 @@ add_executable(UnitTests
         iterance_migration_tests.cpp
         waveform_peak_math_tests.cpp
         midi_queue_tests.cpp
+        note_probability_tests.cpp
 )
 add_test(NAME UnitTests
         COMMAND UnitTests)
