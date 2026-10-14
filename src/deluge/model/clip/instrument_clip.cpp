@@ -19,6 +19,8 @@
 #include "definitions_cxx.hpp"
 #include "gui/l10n/l10n.h"
 #include "gui/ui/browser/browser.h"
+#include "gui/ui/keyboard/layout/in_key.h"
+#include "gui/ui/keyboard/layout/velocity_drums.h"
 #include "gui/ui/load/load_instrument_preset_ui.h"
 #include "gui/views/arranger_view.h"
 #include "gui/views/automation_view.h"
@@ -2578,7 +2580,10 @@ someError:
 		}
 
 		else if (!strcmp(tagName, "keyboardRowInterval")) {
-			keyboardState.isomorphic.rowInterval = reader.readTagOrAttributeValueInt();
+			// The keyboard layouts size and index arrays with these, so keep them to the ranges the UI allows
+			keyboardState.isomorphic.rowInterval = std::clamp(
+			    reader.readTagOrAttributeValueInt(), deluge::gui::ui::keyboard::layout::kMinIsomorphicRowInterval,
+			    deluge::gui::ui::keyboard::layout::kMaxIsomorphicRowInterval);
 		}
 
 		else if (!strcmp(tagName, "drumsScrollOffset")) {
@@ -2586,7 +2591,9 @@ someError:
 		}
 
 		else if (!strcmp(tagName, "drumsZoomLevel")) {
-			keyboardState.drums.zoom_level = reader.readTagOrAttributeValueInt();
+			keyboardState.drums.zoom_level =
+			    std::clamp(reader.readTagOrAttributeValueInt(), deluge::gui::ui::keyboard::layout::k_min_zoom_level,
+			               deluge::gui::ui::keyboard::layout::k_max_zoom_level);
 		}
 
 		else if (!strcmp(tagName, "inKeyScrollOffset")) {
@@ -2594,7 +2601,9 @@ someError:
 		}
 
 		else if (!strcmp(tagName, "inKeyRowInterval")) {
-			keyboardState.inKey.rowInterval = reader.readTagOrAttributeValueInt();
+			keyboardState.inKey.rowInterval =
+			    std::clamp(reader.readTagOrAttributeValueInt(), deluge::gui::ui::keyboard::layout::kMinInKeyRowInterval,
+			               deluge::gui::ui::keyboard::layout::kMaxInKeyRowInterval);
 		}
 
 		else if (!strcmp(tagName, "crossScreenEditLevel")) {
