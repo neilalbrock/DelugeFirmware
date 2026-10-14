@@ -109,7 +109,13 @@ Error FavouritesManager::loadFavouritesFromFile(Deserializer& reader) {
 						favourites[position].filename = fileName.get();
 					}
 				}
+				else {
+					reader.exitTag(); // E.g. written by a newer firmware
+				}
 			}
+		}
+		else {
+			reader.exitTag();
 		}
 	}
 	return Error::NONE;

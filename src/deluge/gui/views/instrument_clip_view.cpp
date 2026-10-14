@@ -1586,6 +1586,9 @@ ramError:
 				else if (!strcmp(tagName, "screenWidth")) {
 					copiedScreenWidth = reader.readTagOrAttributeValueInt();
 				}
+				else {
+					reader.exitTag(); // E.g. written by a newer firmware
+				}
 			}
 		}
 		else if (!strcmp(tagName, "noteRows")) {
@@ -1696,11 +1699,20 @@ ramError:
 							}
 getOut: {}
 						}
+						else {
+							reader.exitTag();
+						}
 					}
 					// Fewer notes than numNotes said - only paste the ones that were read
 					newCopiedNoteRow->numNotes = currentNote;
 				}
+				else {
+					reader.exitTag();
+				}
 			}
+		}
+		else {
+			reader.exitTag();
 		}
 	}
 
