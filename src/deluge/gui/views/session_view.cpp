@@ -1818,6 +1818,9 @@ void SessionView::replaceInstrumentClipWithAudioClip(Clip* clip) {
 		return;
 	}
 
+	// The old Clip is about to be freed, and undo history may still point to it
+	actionLogger.deleteAllLogs();
+
 	int32_t clipIndex = currentSong->sessionClips.getIndexForClip(clip);
 	Clip* newClip = currentSong->replaceInstrumentClipWithAudioClip(clip, clipIndex);
 
