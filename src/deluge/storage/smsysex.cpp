@@ -148,6 +148,8 @@ FILdata* smSysex::openFIL(const char* fPath, int forWrite, uint32_t* fsize, FRES
 		mode = FA_WRITE;
 		if (forWrite == 1)
 			mode |= FA_CREATE_ALWAYS;
+		else
+			mode |= FA_OPEN_ALWAYS; // Append: keep the existing contents, or create the file if it isn't there
 	}
 	FRESULT err = f_open(&fp->file, fPath, mode);
 	*eCode = err;
@@ -226,7 +228,7 @@ FRESULT smSysex::createPathDirectories(String& path, uint32_t date, uint32_t tim
 }
 
 void smSysex::openFile(MIDICable& cable, JsonDeserializer& reader) {
-	bool forWrite = false;
+	int32_t forWrite = 0; // 0 = read, 1 = write (create new), 2 = write (append)
 	String path;
 	int32_t rn = 0;
 	char const* tagName;
