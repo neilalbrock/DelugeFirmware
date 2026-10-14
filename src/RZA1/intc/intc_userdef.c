@@ -728,10 +728,12 @@ static void Userdef_INTC_Dummy_Interrupt(uint32_t int_sense)
  ******************************************************************************/
 void Userdef_INTC_HandlerExe(uint16_t int_id, uint32_t int_sense)
 {
-
-    intc_func_active = int_id;
+    // Handlers nest (INTC_Handler_Interrupt re-enables IRQs), so put back whatever this interrupted rather than
+    // clearing it - otherwise the outer handler carries on looking like task code to routineForSD() and cvSent()
+    uint32_t interruptedFunc = intc_func_active;
+    intc_func_active         = int_id;
     intc_func_table[int_id](int_sense);
-    intc_func_active = 0;
+    intc_func_active = interruptedFunc;
 }
 
 /******************************************************************************
