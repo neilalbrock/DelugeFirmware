@@ -722,7 +722,7 @@ Error StorageManager::openXMLFile(FilePointer* filePointer, XMLDeserializer& rea
 		return Error::NONE;
 	reader.closeWriter();
 
-	return Error::FILE_CORRUPTED;
+	return err; // E.g. FILE_FIRMWARE_VERSION_TOO_NEW, which callers tell the user about
 }
 
 Error StorageManager::openJsonFile(FilePointer* filePointer, JsonDeserializer& reader, char const* firstTagName,
@@ -738,7 +738,7 @@ Error StorageManager::openJsonFile(FilePointer* filePointer, JsonDeserializer& r
 		return Error::NONE;
 	reader.closeWriter();
 
-	return Error::FILE_CORRUPTED;
+	return err; // E.g. FILE_FIRMWARE_VERSION_TOO_NEW, which callers tell the user about
 }
 
 Error StorageManager::openDelugeFile(FileItem* currentFileItem, char const* firstTagName, char const* altTagName,
