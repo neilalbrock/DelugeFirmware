@@ -187,16 +187,28 @@ deleteClipAndGetOut:
 		goto deleteClipAndGetOut;
 	}
 
+	TimelineCounter* originalTimelineCounter = modelStack->getTimelineCounterAllowNull();
 	modelStack->setTimelineCounter(newClip);
 
 	for (int32_t i = 0; i < newClip->noteRows.getNumElements(); i++) {
 		NoteRow* noteRow = newClip->noteRows.getElement(i);
 		int32_t noteRowId = newClip->getNoteRowId(noteRow, i);
 		ModelStackWithNoteRow* modelStackWithNoteRow = modelStack->addNoteRow(noteRowId, noteRow);
-		Error error = noteRow->beenCloned(modelStackWithNoteRow, shouldFlattenReversing);
+		Error rowError = noteRow->beenCloned(modelStackWithNoteRow, shouldFlattenReversing);
 
 		// If that fails, we have to keep going, cos otherwise some NoteRows' NoteVector will be left pointing to stuff
 		// it shouldn't be
+		if (rowError != Error::NONE && error == Error::NONE) {
+			error = rowError;
+		}
+	}
+
+	// A NoteRow that couldn't be cloned has been left with no notes or params, which isn't playable (a kit row needs
+	// its patched params), so give up on the whole clone. Every NoteRow owns its own stuff by now, so it can be
+	// deleted.
+	if (error != Error::NONE) {
+		modelStack->setTimelineCounter(originalTimelineCounter);
+		goto deleteClipAndGetOut;
 	}
 
 	if (shouldFlattenReversing && newClip->sequenceDirectionMode == SequenceDirection::REVERSE) {

@@ -214,9 +214,11 @@ Error ParamManager::cloneParamCollectionsFrom(ParamManager const* other, bool co
 				delugeDealloc(newSummary->paramCollection);
 			}
 
-			// Mark that there's nothing here
-			summaries[0] = mpeParamsOrNullHere;
+			// Mark that there's nothing here - apart from any expression params of our own. When cloning from self
+			// (beenCloned()), all our pointers are still other's, so keep none of them.
+			summaries[0] = (this == other) ? ParamCollectionSummary{0} : mpeParamsOrNullHere;
 			summaries[1] = {0};
+			expressionParamSetOffset = 0;
 			return Error::INSUFFICIENT_RAM;
 		}
 
