@@ -270,16 +270,17 @@ extern "C" void hostedDeviceConfigured(int32_t ip, int32_t midiDeviceNum) {
 
 extern "C" void hostedDeviceDetached(int32_t ip, int32_t midiDeviceNum) {
 
+	if (midiDeviceNum < 0 || midiDeviceNum >= MAX_NUM_USB_MIDI_DEVICES) {
 #if ALPHA_OR_BETA_VERSION
-	if (midiDeviceNum == MAX_NUM_USB_MIDI_DEVICES) {
 		FREEZE_WITH_ERROR("E367");
-	}
 #endif
+		return;
+	}
 
 	uartPrint("detached MIDI device: ");
 	uartPrintNumber(midiDeviceNum);
 	ConnectedUSBMIDIDevice* connectedDevice = &connectedUSBMIDIDevices[ip][midiDeviceNum];
-	int32_t ports = connectedDevice->maxPortConnected;
+	int32_t ports = std::min<int32_t>(connectedDevice->maxPortConnected, std::size(connectedDevice->cable) - 1);
 	for (int32_t i = 0; i <= ports; i++) {
 		MIDICableUSB* device = connectedDevice->cable[i];
 		if (device) { // Surely always has one?
