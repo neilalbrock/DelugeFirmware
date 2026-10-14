@@ -266,13 +266,14 @@ ActionResult Slicer::verticalEncoderAction(int32_t offset, bool inCardRoutine) {
 
 void Slicer::selectEncoderAction(int8_t offset) {
 	if (slicerMode == SLICER_MODE_REGION) {
-		numClips += offset;
-		if (numClips == 257) {
-			numClips = 2;
+		// Wrap round within 2-256 slices - a fast turn can be several detents
+		constexpr int32_t kMinSlices = 2;
+		constexpr int32_t kNumSliceCounts = 256 - kMinSlices + 1;
+		int32_t index = (numClips - kMinSlices + offset) % kNumSliceCounts;
+		if (index < 0) {
+			index += kNumSliceCounts;
 		}
-		else if (numClips == 1) {
-			numClips = 256;
-		}
+		numClips = index + kMinSlices;
 	}
 	else { // SLICER_MODE_MANUAL
 		if (offset < 0) {
