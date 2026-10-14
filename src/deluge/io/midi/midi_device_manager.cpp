@@ -248,8 +248,8 @@ extern "C" void hostedDeviceConfigured(int32_t ip, int32_t midiDeviceNum) {
 	}
 
 	connectedDevice->sq = 0;
-	connectedDevice->canHaveMIDISent = (bool)strcmp(device->name.get(), "Synthstrom MIDI Foot Controller");
-	connectedDevice->canHaveMIDISent = (bool)strcmp(device->name.get(), "LUMI Keys BLOCK");
+	connectedDevice->canHaveMIDISent = strcmp(device->name.get(), "Synthstrom MIDI Foot Controller") != 0
+	                                   && strcmp(device->name.get(), "LUMI Keys BLOCK") != 0;
 
 	device->connectedNow(midiDeviceNum);
 	recountSmallestMPEZones(); // Must be called after setting device->connectionFlags
