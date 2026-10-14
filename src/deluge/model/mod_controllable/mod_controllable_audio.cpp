@@ -1481,7 +1481,10 @@ char const* ModControllableAudio::getHPFModeDisplayName() {
 // This can get called either for hibernation, or because drum now has no active noteRow
 void ModControllableAudio::wontBeRenderedForAWhile() {
 	delay.discardBuffers();
-	endStutter(nullptr);
+	// There's only one stutterer - leave it alone if it's some other track stuttering
+	if (stutterer.isStuttering(this)) {
+		endStutter(nullptr);
+	}
 }
 
 void ModControllableAudio::clearModFXMemory() {
