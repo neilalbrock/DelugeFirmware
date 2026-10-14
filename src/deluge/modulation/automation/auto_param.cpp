@@ -2694,13 +2694,13 @@ justShiftEverything:
 					resultingIndexes[1]--;
 				}
 			}
-		}
 
-		for (int32_t i = 0; i < resultingIndexes[0]; i++) { // After wrap
-			nodes.getElement(i)->pos--;
-		}
-		for (int32_t i = resultingIndexes[1]; i < nodes.getNumElements(); i++) { // Before wrap
-			nodes.getElement(i)->pos--;
+			for (int32_t i = 0; i < resultingIndexes[0]; i++) { // After wrap
+				nodes.getElement(i)->pos--;
+			}
+			for (int32_t i = resultingIndexes[1]; i < nodes.getNumElements(); i++) { // Before wrap
+				nodes.getElement(i)->pos--;
+			}
 		}
 	}
 
