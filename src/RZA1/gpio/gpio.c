@@ -59,7 +59,10 @@ void enableInputBuffer(uint8_t p, uint8_t q)
 
 void setOutputState(uint8_t p, uint8_t q, uint16_t state)
 {
-    ioRegSet(&GPIO.P1, p, q, state);
+    // Write the one pin through the port set/reset register (bits 16-31 select which pins bits 0-15 write), rather than
+    // read-modify-writing Pn: that's done from task code and from ISRs at different priorities, and an interrupt
+    // between the read and the write would undo whatever it did to another pin on the same port.
+    (&GPIO.PSR1)[p - 1] = ((uint32_t)1 << (q + 16)) | ((uint32_t)(state & 1) << q);
 }
 
 uint16_t readInput(uint8_t p, uint8_t q)
