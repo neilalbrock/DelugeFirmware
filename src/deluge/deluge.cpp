@@ -1046,6 +1046,7 @@ void deleteOldSongBeforeLoadingNew() {
 	view.activeModControllableModelStack.modControllable = nullptr;
 	view.activeModControllableModelStack.setTimelineCounter(nullptr);
 	view.activeModControllableModelStack.paramManager = nullptr;
+	midiFollow.clearStoredClips(); // They're all about to go
 
 	Song* toDelete = currentSong;
 	currentSong = nullptr;
