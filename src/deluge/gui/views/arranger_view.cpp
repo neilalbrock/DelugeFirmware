@@ -2996,6 +2996,17 @@ void ArrangerView::reassessWhetherDoingAutoScroll(int32_t pos) {
 }
 
 ActionResult ArrangerView::verticalScrollOneSquare(int32_t direction) {
+	// The encoder can deliver several detents at once. The limits below (and the held-Output drag) are only right for
+	// one square at a time, so take them one by one.
+	if (direction > 1 || direction < -1) {
+		int32_t step = (direction > 0) ? 1 : -1;
+		ActionResult result = ActionResult::DEALT_WITH;
+		for (int32_t i = std::abs(direction); i > 0 && result == ActionResult::DEALT_WITH; i--) {
+			result = verticalScrollOneSquare(step);
+		}
+		return result;
+	}
+
 	if (direction >= 0) { // Up
 		if (currentSong->arrangementYScroll >= currentSong->getNumOutputs() - 1) {
 			return ActionResult::DEALT_WITH;
@@ -3022,6 +3033,9 @@ ActionResult ArrangerView::verticalScrollOneSquare(int32_t direction) {
 		}
 
 		output = outputsOnScreen[yPressedEffective];
+		if (output == nullptr) {
+			return ActionResult::DEALT_WITH;
+		}
 
 		if (direction >= 0) { // Up
 			if (output->next == nullptr) {
