@@ -36,6 +36,7 @@
 extern "C" {
 #include "RZA1/usb/r_usb_basic/src/driver/inc/r_usb_basic_define.h"
 #include "drivers/uart/uart.h"
+#include "timers_interrupts/timers_interrupts.h"
 
 extern uint8_t anyUSBSendingStillHappening[];
 }
@@ -690,8 +691,8 @@ void ConnectedUSBMIDIDevice::bufferMessage(uint32_t fullMessage) {
 		}
 		queued = ringBufWriteIdx - ringBufReadIdx;
 	}
-	if (queued > MIDI_SEND_BUFFER_LEN_RING) {
-		// TODO: show some error message
+	if (queued >= MIDI_SEND_BUFFER_LEN_RING) {
+		// Full - writing now would overwrite the oldest unsent message. TODO: show some error message
 		return;
 	}
 
@@ -710,6 +711,9 @@ bool ConnectedUSBMIDIDevice::hasBufferedSendData() {
 int ConnectedUSBMIDIDevice::sendBufferSpace() {
 	// must be the same unsigned type as ringBufWriteIdx/ringBufReadIdx
 	uint32_t queued = ringBufWriteIdx - ringBufReadIdx;
+	if (queued >= MIDI_SEND_BUFFER_LEN_RING) {
+		return 0;
+	}
 	// each 4-byte MIDI-USB message contains 3 bytes of serial MIDI data
 	return (MIDI_SEND_BUFFER_LEN_RING - queued) * 3;
 }
@@ -746,6 +750,12 @@ bool ConnectedUSBMIDIDevice::consumeSendData() {
 }
 
 void ConnectedUSBMIDIDevice::setup() {
+	{
+		// Drop anything left queued for whatever was connected here before. The ring is also read from the MIDI/gate
+		// timer interrupt.
+		CriticalSectionGuard guard;
+		ringBufReadIdx = ringBufWriteIdx;
+	}
 	numBytesSendingNow = 0;
 	currentlyWaitingToReceive = false;
 	numBytesReceived = 0;
