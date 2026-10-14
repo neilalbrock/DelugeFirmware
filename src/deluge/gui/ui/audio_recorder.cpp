@@ -207,6 +207,13 @@ void AudioRecorder::process() {
 	while (true) {
 		AudioEngine::routineWithClusterLoading();
 
+		// This loop keeps the scheduler from running the MIDI and playback tasks for the whole recording, so do their
+		// work here (as routineForSD() does) - otherwise incoming MIDI and clock pile up unread
+		if (!currentlyAccessingCard) {
+			playbackHandler.midiRoutine();
+			playbackHandler.routine();
+		}
+
 		uiTimerManager.routine();
 
 		if (display->haveOLED()) {
