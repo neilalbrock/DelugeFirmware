@@ -1170,7 +1170,8 @@ void InstrumentClipView::copyNotes(Serializer* writer, bool selectedDrumOnly) {
 			noteRowYDisplay = yVisual - getCurrentInstrumentClip()->yScroll;
 		}
 		if (isFilteredCopy) {
-			if (!auditionPadIsPressed[noteRowYDisplay])
+			// Rows scrolled off screen can't have their audition pad held
+			if (noteRowYDisplay < 0 || noteRowYDisplay >= kDisplayHeight || !auditionPadIsPressed[noteRowYDisplay])
 				continue;
 		}
 		if (getCurrentOutputType() == OutputType::KIT && thisNoteRow->drum != getCurrentKit()->selectedDrum
