@@ -2805,6 +2805,7 @@ void AutoParam::nudgeNonInterpolatingNodesAtPos(int32_t pos, int32_t offset, int
 
 			int32_t newNodePos = pos + offset;
 			int32_t nextNodeI;
+			bool wrappingRight = false;
 
 			// If that's caused wrapping left...
 			if (newNodePos < 0) {
@@ -2840,9 +2841,10 @@ doWrap:
 					}
 				}
 
-				// Otherwise, create a new node
+				// Otherwise, create a new node - at the start if we wrapped round to pos 0, or the end if back to the
+				// end
 				else {
-					nextNodeI = nodes.getNumElements();
+					nextNodeI = wrappingRight ? 0 : nodes.getNumElements();
 					{
 						Error error = nodes.insertAtIndex(
 						    nextNodeI); // This shouldn't be able to fail, cos we just deleted a node
@@ -2864,6 +2866,7 @@ setNodeValue:
 			else if (newNodePos >= lengthBeforeLoop) {
 				newNodePos -= lengthBeforeLoop;
 				nextNodeI = 0;
+				wrappingRight = true;
 				goto doWrap;
 			}
 
