@@ -3191,6 +3191,9 @@ void Song::deleteClipObject(Clip* clip, bool songBeingDestroyedToo, InstrumentRe
 		}
 #endif
 
+		// Arrangement-only Clips get deleted without going through removeSessionClipLowLevel()
+		replaceClipInSessionMacros(clip, nullptr);
+
 		char modelStackMemory[MODEL_STACK_MAX_SIZE];
 		ModelStackWithTimelineCounter* modelStack = setupModelStackWithTimelineCounter(modelStackMemory, this, clip);
 
@@ -5469,14 +5472,24 @@ void Song::removeSessionClipLowLevel(Clip* clip, int32_t clipIndex) {
 		clip->activeIfNoSolo = false;
 	}
 
-	for (int y = 0; y < 8; y++) {
-		auto& m = sessionMacros[y];
-		if (m.kind == CLIP_LAUNCH && m.clip == clip) {
-			m.kind = NO_MACRO;
-		}
-	}
+	replaceClipInSessionMacros(clip, nullptr);
 
 	sessionClips.deleteAtIndex(clipIndex);
+}
+
+// Points any clip-launch macros for oldClip at newClip instead, or clears them if newClip is null
+void Song::replaceClipInSessionMacros(Clip* oldClip, Clip* newClip) {
+	for (auto& m : sessionMacros) {
+		if (m.kind == CLIP_LAUNCH && m.clip == oldClip) {
+			if (newClip) {
+				m.clip = newClip;
+			}
+			else {
+				m.kind = NO_MACRO;
+				m.clip = nullptr;
+			}
+		}
+	}
 }
 
 // originalClipIndex is optional
@@ -5666,6 +5679,8 @@ void Song::swapClips(Clip* newClip, Clip* oldClip, int32_t clipIndex) {
 	if (oldClip == currentClip) {
 		currentClip = newClip;
 	}
+
+	replaceClipInSessionMacros(oldClip, newClip);
 
 	deleteClipObject(oldClip);
 }
