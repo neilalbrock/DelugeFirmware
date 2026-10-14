@@ -560,16 +560,18 @@ Error StorageManager::loadSynthToDrum(Song* song, InstrumentClip* clip, bool may
                                       SoundDrum** getInstrument, FilePointer* filePointer, String* name,
                                       String* dirPath) {
 	OutputType outputType = OutputType::SYNTH;
-	SoundDrum* newDrum = (SoundDrum*)createNewDrum(DrumType::SOUND);
-	if (!newDrum) {
-		return Error::INSUFFICIENT_RAM;
-	}
 
 	AudioEngine::logAction("loadSynthDrumFromFile");
 
 	Error error = openInstrumentFile(outputType, filePointer);
 	if (error != Error::NONE) {
 		return error;
+	}
+
+	SoundDrum* newDrum = (SoundDrum*)createNewDrum(DrumType::SOUND);
+	if (!newDrum) {
+		activeDeserializer->closeWriter();
+		return Error::INSUFFICIENT_RAM;
 	}
 
 	AudioEngine::logAction("loadInstrumentFromFile");
@@ -584,12 +586,11 @@ Error StorageManager::loadSynthToDrum(Song* song, InstrumentClip* clip, bool may
 		void* toDealloc = static_cast<void*>(newDrum);
 		newDrum->~SoundDrum();
 		GeneralMemoryAllocator::get().dealloc(toDealloc);
-		return error;
 
-		if (!fileSuccess) {
-			error = Error::SD_CARD;
-			return error;
+		if (error == Error::NONE) {
+			error = Error::SD_CARD; // The read was fine but closing the file wasn't
 		}
+		return error;
 	}
 	// The caller owns whatever drum this replaces - it may still be referenced by NoteRows in several Clips, so it's up
 	// to the caller to move those over before deleting it
