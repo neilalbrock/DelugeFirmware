@@ -22,12 +22,15 @@
 
 void MIDICableUSBUpstream::writeReferenceAttributesToFile(Serializer& writer) {
 	// Same line. Usually the user wouldn't have default velocity sensitivity set for their computer.
-	writer.writeAttribute("port", portNumber ? "upstreamUSB2" : "upstreamUSB", false);
+	char const* port = (portNumber == 2) ? "upstreamUSB3" : (portNumber == 1) ? "upstreamUSB2" : "upstreamUSB";
+	writer.writeAttribute("port", port, false);
 }
 
 void MIDICableUSBUpstream::writeToFlash(uint8_t* memory) {
 	D_PRINTLN("writing to flash port  %d  into ", portNumber);
-	*(uint16_t*)memory = portNumber ? VENDOR_ID_UPSTREAM_USB2 : VENDOR_ID_UPSTREAM_USB;
+	*(uint16_t*)memory = (portNumber == 2)   ? VENDOR_ID_UPSTREAM_USB3
+	                     : (portNumber == 1) ? VENDOR_ID_UPSTREAM_USB2
+	                                         : VENDOR_ID_UPSTREAM_USB;
 }
 
 char const* MIDICableUSBUpstream::getDisplayName() {

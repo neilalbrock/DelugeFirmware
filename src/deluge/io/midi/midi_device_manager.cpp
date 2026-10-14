@@ -430,7 +430,7 @@ void writeDevicesToFile() {
 	anyChangesToSave = false;
 
 	bool anyWorthWritting = dinMIDIPorts.worthWritingToFile() || upstreamUSBMIDICable1.worthWritingToFile()
-	                        || upstreamUSBMIDICable2.worthWritingToFile();
+	                        || upstreamUSBMIDICable2.worthWritingToFile() || upstreamUSBMIDICable3.worthWritingToFile();
 	if (!anyWorthWritting) {
 		for (int32_t d = 0; d < hostedMIDIDevices.getNumElements(); d++) {
 			MIDICableUSBHosted* device = (MIDICableUSBHosted*)hostedMIDIDevices.getElement(d);
@@ -466,6 +466,9 @@ void writeDevicesToFile() {
 	}
 	if (upstreamUSBMIDICable2.worthWritingToFile()) {
 		upstreamUSBMIDICable2.writeToFile(writer, "upstreamUSBDevice2");
+	}
+	if (upstreamUSBMIDICable3.worthWritingToFile()) {
+		upstreamUSBMIDICable3.writeToFile(writer, "upstreamUSBDevice3");
 	}
 
 	for (int32_t d = 0; d < hostedMIDIDevices.getNumElements(); d++) {
