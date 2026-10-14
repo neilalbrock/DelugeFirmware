@@ -94,6 +94,7 @@
 #include "util/functions.h"
 #include "util/lookuptables/lookuptables.h"
 #include "util/try.h"
+#include <limits>
 #include <new>
 #include <string.h>
 #include <vector>
@@ -1612,12 +1613,25 @@ ramError:
 
 							int32_t numNotes = reader.readTagOrAttributeValueInt();
 
-							newCopiedNoteRow->numNotes = numNotes;
-
-							newCopiedNoteRow->notes =
-							    (Note*)GeneralMemoryAllocator::get().allocLowSpeed(sizeof(Note) * numNotes);
-
+							// The count comes from the file, so don't trust it for the allocation size
+							if (newCopiedNoteRow->notes) {
+								delugeDealloc(newCopiedNoteRow->notes);
+								newCopiedNoteRow->notes = nullptr;
+							}
+							newCopiedNoteRow->numNotes = 0;
 							currentNote = 0;
+
+							if (numNotes > 0
+							    && static_cast<size_t>(numNotes)
+							           <= std::numeric_limits<int32_t>::max() / sizeof(Note)) {
+								newCopiedNoteRow->notes =
+								    (Note*)GeneralMemoryAllocator::get().allocLowSpeed(sizeof(Note) * numNotes);
+								if (!newCopiedNoteRow->notes) {
+									deleteCopiedNoteRows();
+									goto ramError;
+								}
+								newCopiedNoteRow->numNotes = numNotes;
+							}
 						}
 						else if (!strcmp(tagName, "yNote")) {
 							int16_t yNote = reader.readTagOrAttributeValueInt();
@@ -1652,6 +1666,9 @@ ramError:
 									goto getOut;
 								}
 
+								if (currentNote >= newCopiedNoteRow->numNotes) {
+									continue; // More notes than numNotes said - skip the rest
+								}
 								Note* newNote = &newCopiedNoteRow->notes[currentNote];
 
 								int32_t pos = hexToIntFixedLength(hexChars, 8);
@@ -1680,6 +1697,8 @@ ramError:
 getOut: {}
 						}
 					}
+					// Fewer notes than numNotes said - only paste the ones that were read
+					newCopiedNoteRow->numNotes = currentNote;
 				}
 			}
 		}
