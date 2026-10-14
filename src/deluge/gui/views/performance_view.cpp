@@ -1732,7 +1732,11 @@ void PerformanceView::writeDefaultsToFile() {
 
 	writer.writeClosingTag(PERFORM_DEFAULTS_TAG);
 
-	writer.closeFileAfterWriting();
+	error = writer.closeFileAfterWriting();
+	if (error != Error::NONE) {
+		display->displayError(error);
+		return; // Still unsaved
+	}
 
 	anyChangesToSave = false;
 }

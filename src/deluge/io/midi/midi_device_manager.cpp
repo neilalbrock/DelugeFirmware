@@ -478,7 +478,10 @@ void writeDevicesToFile() {
 
 	writer.writeClosingTag("midiDevices");
 
-	writer.closeFileAfterWriting();
+	error = writer.closeFileAfterWriting();
+	if (error != Error::NONE) {
+		display->displayError(error); // Don't let the settings silently not be kept
+	}
 }
 
 bool successfullyReadDevicesFromFile = false; // We'll only do this one time

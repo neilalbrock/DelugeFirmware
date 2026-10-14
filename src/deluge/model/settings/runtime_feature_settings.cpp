@@ -338,5 +338,8 @@ void RuntimeFeatureSettings::writeSettingsToFile() {
 	}
 
 	writer.writeClosingTag(TAG_RUNTIME_FEATURE_SETTINGS);
-	writer.closeFileAfterWriting();
+	error = writer.closeFileAfterWriting();
+	if (error != Error::NONE) {
+		display->displayError(error); // Don't let the settings silently not be kept
+	}
 }
