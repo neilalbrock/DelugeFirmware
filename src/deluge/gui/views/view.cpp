@@ -2085,14 +2085,15 @@ void View::drawOutputNameFromDetails(OutputType outputType, int32_t channel, int
 			blinkLed(led);
 		}
 
-		InstrumentClip* clip = nullptr;
+		InstrumentClip* instrumentClip = nullptr;
 		if (clip && clip->type == ClipType::INSTRUMENT) {
-			clip = (InstrumentClip*)clip;
+			instrumentClip = (InstrumentClip*)clip;
 		}
 
-		setLedState(LED::KEYBOARD, (clip && clip->onKeyboardScreen));
-		setLedState(LED::SCALE_MODE, (clip && clip->inScaleMode && clip->output->type != OutputType::KIT));
-		setLedState(LED::CROSS_SCREEN_EDIT, (clip && clip->wrapEditing));
+		setLedState(LED::KEYBOARD, (instrumentClip && instrumentClip->onKeyboardScreen));
+		setLedState(LED::SCALE_MODE,
+		            (instrumentClip && instrumentClip->inScaleMode && instrumentClip->output->type != OutputType::KIT));
+		setLedState(LED::CROSS_SCREEN_EDIT, (instrumentClip && instrumentClip->wrapEditing));
 	}
 
 	// hook to render display for OLED and 7SEG when in Automation View
