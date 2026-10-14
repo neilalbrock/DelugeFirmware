@@ -2657,10 +2657,12 @@ void PlaybackHandler::resyncInternalTicksToInputTicks(Song* song) {
 // This is that special MIDI command for Todd T
 void PlaybackHandler::forceResetPlayPos(Song* song, bool restartingPlaybackAtBeginning) {
 	if (playbackState) {
+		// endPlayback() clears playbackState, after which isExternalClockActive() is always false
+		bool wasExternalClock = isExternalClockActive();
 
 		endPlayback();
 
-		if (isExternalClockActive()) {
+		if (wasExternalClock) {
 			setupPlaybackUsingExternalClock();
 		}
 
@@ -2915,7 +2917,9 @@ bool PlaybackHandler::tryGlobalMIDICommands(MIDICable& cable, int32_t channel, i
 		else if (midiEngine.globalMIDICommands[c].equalsNoteOrCC(&cable, channel, note)) {
 			switch (command) {
 			case GlobalMIDICommand::PLAYBACK_RESTART:
-				if (recording != RecordingMode::ARRANGEMENT) {
+				// Like the play button, don't restart while following external clock - the clock source decides where
+				// playback is
+				if (recording != RecordingMode::ARRANGEMENT && !isExternalClockActive()) {
 					forceResetPlayPos(currentSong, true);
 				}
 				break;
