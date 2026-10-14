@@ -34,6 +34,9 @@ class SampleCache;
 class Cluster final : public Stealable {
 public:
 	constexpr static size_t kSizeFAT16Max = 32768;
+	/// The largest cluster any card can have: a FAT boot sector allows at most 128 sectors per cluster, and FatFs is
+	/// set up for 512-byte sectors (FF_MAX_SS).
+	constexpr static size_t kSizeMax = 128 * 512;
 	enum class Type {
 		EMPTY,
 		SAMPLE,

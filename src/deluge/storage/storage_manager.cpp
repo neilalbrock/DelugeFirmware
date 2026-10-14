@@ -789,7 +789,8 @@ bool StorageManager::buildPathToFile(const char* fileName) {
 }
 
 FileReader::FileReader() {
-	void* temp = GeneralMemoryAllocator::get().allocLowSpeed(32768 + CACHE_LINE_SIZE * 2);
+	// Filled a whole cluster at a time, and this is made before the card has been mounted, so allow for the biggest
+	void* temp = GeneralMemoryAllocator::get().allocLowSpeed(Cluster::kSizeMax + CACHE_LINE_SIZE * 2);
 	fileClusterBuffer = (char*)temp + CACHE_LINE_SIZE;
 }
 
