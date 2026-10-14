@@ -192,8 +192,10 @@ int32_t uartGetTxBufferFullnessByItem(int32_t item) {
 	return (uartItems[item].txBufferWritePos - uartItems[item].txBufferReadPos) & (txBufferSizes[item] - 1);
 }
 
+// One byte is always kept free: a completely full buffer would have its write position back at its read position, and
+// look empty
 int32_t uartGetTxBufferSpace(int32_t item) {
-	return txBufferSizes[item] - uartGetTxBufferFullnessByItem(item);
+	return txBufferSizes[item] - 1 - uartGetTxBufferFullnessByItem(item);
 }
 
 void uartDrain(uint32_t item) {

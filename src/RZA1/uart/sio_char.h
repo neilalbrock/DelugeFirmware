@@ -84,6 +84,8 @@ extern char midiTxBuffer[];
         uartItems[UART_ITEM_PIC].txBufferWritePos &= (PIC_TX_BUFFER_SIZE - 1);                                         \
     } while (0)
 
+// Doesn't check for space - callers must check uartGetTxBufferSpace(UART_ITEM_MIDI) first, or bytes still waiting to be
+// sent get overwritten
 #define bufferMIDIUart(charToSend)                                                                                     \
     do                                                                                                                 \
     {                                                                                                                  \
@@ -91,7 +93,7 @@ extern char midiTxBuffer[];
         *(((volatile char*)(&midiTxBuffer[0])) + writePos) = charToSend;                                               \
                                                                                                                        \
         uartItems[UART_ITEM_MIDI].txBufferWritePos += 1;                                                               \
-        uartItems[UART_ITEM_MIDI].txBufferWritePos &= (PIC_TX_BUFFER_SIZE - 1);                                        \
+        uartItems[UART_ITEM_MIDI].txBufferWritePos &= (MIDI_TX_BUFFER_SIZE - 1);                                       \
     } while (0)
 
 /* SIO_CHAR_H */
