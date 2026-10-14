@@ -72,9 +72,11 @@ void LivePitchShifter::render(int32_t* __restrict__ outputBuffer, int32_t numSam
                               int32_t phaseIncrement, int32_t amplitude, int32_t amplitudeIncrement,
                               int32_t interpolationBufferSize) {
 
-	LiveInputBuffer* liveInputBuffer = AudioEngine::getOrCreateLiveInputBuffer(inputType, false);
-	if (ALPHA_OR_BETA_VERSION && !liveInputBuffer) {
-		FREEZE_WITH_ERROR("E165");
+	// AudioEngine::slowRoutine() frees the buffer if it misses a render (e.g. while this oscillator's level was at
+	// zero), so it may need making again
+	LiveInputBuffer* liveInputBuffer = AudioEngine::getOrCreateLiveInputBuffer(inputType, true);
+	if (!liveInputBuffer) {
+		return; // No memory - just stay silent
 	}
 
 	liveInputBuffer->giveInput(numSamplesThisFunctionCall, AudioEngine::audioSampleTimer, inputType);
