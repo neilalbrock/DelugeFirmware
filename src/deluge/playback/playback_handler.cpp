@@ -1494,7 +1494,9 @@ void PlaybackHandler::doSongSwap(bool preservePlayPosition) {
 					}
 				}
 
-				preLoadedSong->timePerTimerTickBig = currentSong->timePerTimerTickBig;
+				// Not just the field - the reciprocal that synced LFO / delay / arp rates use must match. (Nothing gets
+				// rescheduled, as preLoadedSong isn't the current Song yet.)
+				preLoadedSong->setTimePerTimerTick(currentSong->timePerTimerTickBig, false);
 			}
 
 			// Any MIDI or gate notes wouldn't be stopped by our killAllVoices() call below
