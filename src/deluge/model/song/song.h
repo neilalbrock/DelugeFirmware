@@ -294,6 +294,7 @@ public:
 	uint32_t getTimePerTimerTickRounded();
 	int32_t getNumOutputs();
 	Clip* getNextSessionClipWithOutput(int32_t offset, Output* output, Clip* prevClip);
+	Clip* getNextSessionClipWithOutputOneStep(int32_t offset, Output* output, Clip* prevClip);
 	bool anyClipsSoloing;
 
 	ParamManager* getBackedUpParamManagerForExactClip(ModControllableAudio* modControllable, Clip* clip,

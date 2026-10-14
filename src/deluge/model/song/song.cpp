@@ -1106,6 +1106,17 @@ Clip* Song::getSessionClipWithOutput(Output* output, int32_t requireSection, Cli
 }
 
 Clip* Song::getNextSessionClipWithOutput(int32_t offset, Output* output, Clip* prevClip) {
+	// A fast turn can deliver several detents at once. Take them one at a time, so each moves to the next matching Clip
+	// (or to NULL past either end) just as separate turns would - the single-step search below can't skip further.
+	int32_t direction = (offset < 0) ? -1 : 1;
+	Clip* clip = prevClip;
+	for (int32_t steps = std::abs(offset); steps > 0; steps--) {
+		clip = getNextSessionClipWithOutputOneStep(direction, output, clip);
+	}
+	return clip;
+}
+
+Clip* Song::getNextSessionClipWithOutputOneStep(int32_t offset, Output* output, Clip* prevClip) {
 
 	int32_t oldIndex = -1;
 	if (prevClip) {
