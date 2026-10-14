@@ -1118,8 +1118,10 @@ void AutoParam::setValueForRegion(uint32_t pos, uint32_t length, int32_t value,
 		action->recordParamChangeIfNotAlreadySnapshotted(modelStack);
 	}
 
-	// First, special case if our region covers the whole NoteRow / Clip / TimelineCounter
-	if (length == effectiveLength) {
+	// First, special case if our region covers the whole NoteRow / Clip / TimelineCounter. It can be asked for more
+	// than that (e.g. a note on a NoteRow shorter than one zoomed-out square), which homogenizeRegion() can't wrap
+	// correctly.
+	if (length >= effectiveLength) {
 		if (isAutomated()) {
 			deleteAutomation(action, modelStack);
 		}
