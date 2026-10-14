@@ -100,6 +100,10 @@ void MIDICableUSB::sendSysex(const uint8_t* data, int32_t len) {
 
 	int32_t pos = 0;
 
+	// The MIDI/gate output timer ISR writes queued messages to this buffer too. Hold it off for the whole message so
+	// none land between its packets.
+	CriticalSectionGuard guard;
+
 	// While we are standardizing on using the 4 byte Synthstrom Deluge in our messages, it is possible that client
 	// programs have not been updated yet, so if we get a SysEx request with 0x7D as the ID, we respond in-kind. This
 	// involves skipping the the first 5 bytes and sending 0xF0, 0x7D instead. Since the USB driver batches things in 3
@@ -108,8 +112,6 @@ void MIDICableUSB::sendSysex(const uint8_t* data, int32_t len) {
 		// Since the message ends with 0xF7, we can assume that data[5] does exist.
 		// fake 0xF0, 0x7D, data[5] for first send
 		uint32_t packed = ((uint32_t)data[5] << 24) | 0x007DF004 | (portNumber << 4);
-		// The MIDI/gate output timer ISR writes to this buffer too
-		CriticalSectionGuard guard;
 		connectedDevice->bufferMessage(packed);
 		pos = 6;
 	}
@@ -135,7 +137,6 @@ void MIDICableUSB::sendSysex(const uint8_t* data, int32_t len) {
 		}
 		status |= (portNumber << 4);
 		uint32_t packed = ((uint32_t)byte2 << 24) | ((uint32_t)byte1 << 16) | ((uint32_t)byte0 << 8) | status;
-		CriticalSectionGuard guard;
 		connectedDevice->bufferMessage(packed);
 	}
 }
