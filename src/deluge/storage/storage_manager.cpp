@@ -1087,9 +1087,13 @@ Error FileWriter::closeAfterWriting(char const* path, char const* beginningStrin
 		}
 	}
 
-	result = closeWriter();
-	if (result) {
-		return Error::WRITE_FAIL;
+	// Only reopened for checking if we were given its path - otherwise it's already closed, and closing it again would
+	// fail with FR_INVALID_OBJECT even though the file was written fine
+	if (path) {
+		result = closeWriter();
+		if (result) {
+			return Error::WRITE_FAIL;
+		}
 	}
 
 	return Error::NONE;
