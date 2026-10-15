@@ -347,6 +347,7 @@ justDoArp:
 void Arrangement::resetPlayPos(int32_t newPos, bool doingComplete, int32_t buttonPressLatency) {
 
 	AudioEngine::bypassCulling = true;
+	currentSong->forgetAutomatedBPM(); // So tempo automation gets applied afresh from the new position
 
 	playbackStartedAtPos = newPos;
 	lastProcessedPos = newPos;
@@ -387,6 +388,25 @@ void Arrangement::resetPlayPos(int32_t newPos, bool doingComplete, int32_t butto
 					display->displayError(error);
 				}
 			}
+		}
+	}
+}
+
+// For jumping to pos while playing: resetPlayPos() only resumes the Clips that have an instance there, and the others
+// would otherwise never be ticked again - so their notes would never end
+void Arrangement::stopClipsWithNoInstanceAt(int32_t pos) {
+	for (Output* output = currentSong->firstOutput; output; output = output->next) {
+		Clip* clip = output->getActiveClip();
+		if (!clip || !clip->activeIfNoSolo || clip->getCurrentlyRecordingLinearly()) {
+			continue; // (Leave any arrangement recording to its own handling)
+		}
+		int32_t i = output->clipInstances.search(pos + 1, LESS);
+		ClipInstance* clipInstance = output->clipInstances.getElement(i);
+		bool hasInstanceAtPos =
+		    clipInstance && clipInstance->clip == clip && clipInstance->pos + clipInstance->length > pos;
+		if (!hasInstanceAtPos) {
+			clip->expectNoFurtherTicks(currentSong);
+			clip->activeIfNoSolo = false;
 		}
 	}
 }

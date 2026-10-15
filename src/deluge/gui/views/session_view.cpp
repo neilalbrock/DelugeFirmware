@@ -4852,7 +4852,8 @@ Output* SessionView::getOutputFromPad(int32_t x, int32_t y) {
 		return gridTrackFromX(x, gridTrackCount());
 	}
 	else {
-		return getClipOnScreen(y)->output;
+		Clip* clip = getClipOnScreen(y); // Rows below the last Clip have none
+		return clip ? clip->output : nullptr;
 	}
 	return nullptr;
 }

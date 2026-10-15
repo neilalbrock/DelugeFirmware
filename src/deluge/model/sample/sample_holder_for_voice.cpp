@@ -88,22 +88,23 @@ void SampleHolderForVoice::claimClusterReasons(bool reversed, int32_t clusterLoa
 		}
 	}
 
-	uint32_t duration = getDurationInSamples();
-	auto duration_clusters = duration >> Cluster::size_magnitude;
-	if (duration_clusters <= kMaxNumClustersLoadedAhead + kNumClustersLoadedAhead) {
-		D_PRINTLN("caching whole sample");
-		// claim the next few reasons for the sample instead since we can keep it all cached
-		uint32_t nextClusterStartByte = startPlaybackAtByte + (2 * Cluster::size);
-
-		claimClusterReasonsForMarker(clustersForLoopStart, nextClusterStartByte, playDirection, clusterLoadInstruction,
-		                             kMaxNumClustersLoadedAhead);
-	}
-
-	else if (loopStartPlaybackAtSample) {
+	// A loop start comes first: a looping voice needs those clusters there when it wraps round, or it stops
+	if (loopStartPlaybackAtSample) {
 		int32_t loopStartPlaybackAtByte =
 		    ((Sample*)audioFile)->audioDataStartPosBytes + loopStartPlaybackAtSample * bytesPerSample;
 		claimClusterReasonsForMarker(clustersForLoopStart, loopStartPlaybackAtByte, playDirection,
 		                             clusterLoadInstruction, kNumClustersLoadedAhead);
+	}
+
+	// Otherwise, for a short sample, claim the clusters after the start too since we can keep it all cached. (Cluster
+	// size is in bytes, so the duration needs to be too.)
+	else if (((uint64_t)getDurationInSamples() * bytesPerSample >> Cluster::size_magnitude)
+	         <= kMaxNumClustersLoadedAhead + kNumClustersLoadedAhead) {
+		D_PRINTLN("caching whole sample");
+		int32_t nextClusterStartByte = startPlaybackAtByte + playDirection * (2 * (int32_t)Cluster::size);
+
+		claimClusterReasonsForMarker(clustersForLoopStart, nextClusterStartByte, playDirection, clusterLoadInstruction,
+		                             kMaxNumClustersLoadedAhead);
 	}
 
 	// Or if no loop start point now, clear out any reasons we had before

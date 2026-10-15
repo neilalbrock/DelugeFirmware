@@ -1686,8 +1686,9 @@ void InstrumentClip::prepareToEnterKitMode(Song* song) {
 		}
 	}
 
-	// Delete empty NoteRows that aren't onscreen
-	for (int32_t i = 0; i < noteRows.getNumElements(); i++) {
+	// Delete empty NoteRows that aren't onscreen. Only step on when keeping one - after a deletion, the next row is
+	// already at i.
+	for (int32_t i = 0; i < noteRows.getNumElements();) {
 		NoteRow* thisNoteRow = noteRows.getElement(i);
 
 		int32_t yDisplay = getYVisualFromYNote(thisNoteRow->y, song) - yScroll;

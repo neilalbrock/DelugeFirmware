@@ -210,10 +210,22 @@ void Action::recordParamChangeDefinitely(ModelStackWithAutoParam const* modelSta
 
 	void* consMemory = GeneralMemoryAllocator::get().allocLowSpeed(sizeof(ConsequenceParamChange));
 
-	if (consMemory) {
-		ConsequenceParamChange* newCons = new (consMemory) ConsequenceParamChange(modelStack, stealData);
-		addConsequence(newCons);
+	if (!consMemory) {
+		// No undo for this then - but if the caller wanted the data stolen, it's relying on it being gone
+		if (stealData) {
+			modelStack->autoParam->nodes.empty();
+		}
+		return;
 	}
+
+	ConsequenceParamChange* newCons = new (consMemory) ConsequenceParamChange(modelStack, stealData);
+	if (!newCons->snapshotTaken) {
+		// An empty snapshot would wipe the automation if this got undone
+		newCons->~ConsequenceParamChange();
+		delugeDealloc(consMemory);
+		return;
+	}
+	addConsequence(newCons);
 }
 
 bool Action::containsConsequenceNoteArrayChange(InstrumentClip* clip, int32_t noteRowId, bool moveToFrontIfFound) {

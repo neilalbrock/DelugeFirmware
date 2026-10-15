@@ -61,7 +61,7 @@ private:
 	Time lastFinishTime{0};
 	Time lastPrintedStats{0};
 
-	volatile TaskID currentID{0};
+	volatile TaskID currentID{-1}; // -1 when no task is running (e.g. the scheduler checking conditional tasks)
 	// for time tracking with rollover
 	Time lastTime{0};
 	Time runningTime{0};

@@ -543,8 +543,18 @@ void JsonDeserializer::exitTag(char const* exitTagName, bool closeObject) {
 		readInt(); // skip the number.
 		return;
 	}
+	else if ((leadingChar >= 'a' && leadingChar <= 'z') || (leadingChar >= 'A' && leadingChar <= 'Z')) {
+		// true, false or null - skip the rest of the word
+		char nextChar;
+		while (peekChar(&nextChar) && ((nextChar >= 'a' && nextChar <= 'z') || (nextChar >= 'A' && nextChar <= 'Z'))) {
+			readChar(&nextChar);
+		}
+		return;
+	}
 	else {
+		// Nothing to balance against, so don't go looking for a closing character
 		D_PRINTLN("Malformed value encountered.");
+		return;
 	}
 
 	while ((balanceCtr > 0) && readChar(&currentChar)) {

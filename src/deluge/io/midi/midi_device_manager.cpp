@@ -36,6 +36,7 @@
 extern "C" {
 #include "RZA1/usb/r_usb_basic/src/driver/inc/r_usb_basic_define.h"
 #include "drivers/uart/uart.h"
+#include "timers_interrupts/timers_interrupts.h"
 
 extern uint8_t anyUSBSendingStillHappening[];
 }
@@ -247,8 +248,8 @@ extern "C" void hostedDeviceConfigured(int32_t ip, int32_t midiDeviceNum) {
 	}
 
 	connectedDevice->sq = 0;
-	connectedDevice->canHaveMIDISent = (bool)strcmp(device->name.get(), "Synthstrom MIDI Foot Controller");
-	connectedDevice->canHaveMIDISent = (bool)strcmp(device->name.get(), "LUMI Keys BLOCK");
+	connectedDevice->canHaveMIDISent = strcmp(device->name.get(), "Synthstrom MIDI Foot Controller") != 0
+	                                   && strcmp(device->name.get(), "LUMI Keys BLOCK") != 0;
 
 	device->connectedNow(midiDeviceNum);
 	recountSmallestMPEZones(); // Must be called after setting device->connectionFlags
@@ -429,7 +430,7 @@ void writeDevicesToFile() {
 	anyChangesToSave = false;
 
 	bool anyWorthWritting = dinMIDIPorts.worthWritingToFile() || upstreamUSBMIDICable1.worthWritingToFile()
-	                        || upstreamUSBMIDICable2.worthWritingToFile();
+	                        || upstreamUSBMIDICable2.worthWritingToFile() || upstreamUSBMIDICable3.worthWritingToFile();
 	if (!anyWorthWritting) {
 		for (int32_t d = 0; d < hostedMIDIDevices.getNumElements(); d++) {
 			MIDICableUSBHosted* device = (MIDICableUSBHosted*)hostedMIDIDevices.getElement(d);
@@ -466,6 +467,9 @@ void writeDevicesToFile() {
 	if (upstreamUSBMIDICable2.worthWritingToFile()) {
 		upstreamUSBMIDICable2.writeToFile(writer, "upstreamUSBDevice2");
 	}
+	if (upstreamUSBMIDICable3.worthWritingToFile()) {
+		upstreamUSBMIDICable3.writeToFile(writer, "upstreamUSBDevice3");
+	}
 
 	for (int32_t d = 0; d < hostedMIDIDevices.getNumElements(); d++) {
 		MIDICableUSBHosted* device = (MIDICableUSBHosted*)hostedMIDIDevices.getElement(d);
@@ -478,7 +482,10 @@ void writeDevicesToFile() {
 
 	writer.writeClosingTag("midiDevices");
 
-	writer.closeFileAfterWriting();
+	error = writer.closeFileAfterWriting();
+	if (error != Error::NONE) {
+		display->displayError(error); // Don't let the settings silently not be kept
+	}
 }
 
 bool successfullyReadDevicesFromFile = false; // We'll only do this one time
@@ -687,8 +694,8 @@ void ConnectedUSBMIDIDevice::bufferMessage(uint32_t fullMessage) {
 		}
 		queued = ringBufWriteIdx - ringBufReadIdx;
 	}
-	if (queued > MIDI_SEND_BUFFER_LEN_RING) {
-		// TODO: show some error message
+	if (queued >= MIDI_SEND_BUFFER_LEN_RING) {
+		// Full - writing now would overwrite the oldest unsent message. TODO: show some error message
 		return;
 	}
 
@@ -707,6 +714,9 @@ bool ConnectedUSBMIDIDevice::hasBufferedSendData() {
 int ConnectedUSBMIDIDevice::sendBufferSpace() {
 	// must be the same unsigned type as ringBufWriteIdx/ringBufReadIdx
 	uint32_t queued = ringBufWriteIdx - ringBufReadIdx;
+	if (queued >= MIDI_SEND_BUFFER_LEN_RING) {
+		return 0;
+	}
 	// each 4-byte MIDI-USB message contains 3 bytes of serial MIDI data
 	return (MIDI_SEND_BUFFER_LEN_RING - queued) * 3;
 }
@@ -743,6 +753,12 @@ bool ConnectedUSBMIDIDevice::consumeSendData() {
 }
 
 void ConnectedUSBMIDIDevice::setup() {
+	{
+		// Drop anything left queued for whatever was connected here before. The ring is also read from the MIDI/gate
+		// timer interrupt.
+		CriticalSectionGuard guard;
+		ringBufReadIdx = ringBufWriteIdx;
+	}
 	numBytesSendingNow = 0;
 	currentlyWaitingToReceive = false;
 	numBytesReceived = 0;

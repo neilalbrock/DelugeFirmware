@@ -162,7 +162,8 @@ ActionResult TimelineView::horizontalEncoderAction(int32_t offset) {
 		// in note row editor we are holding horizontal encoder + auditioning to zoom
 		if (isUIModeActiveExclusively(UI_MODE_HOLDING_HORIZONTAL_ENCODER_BUTTON) || inNoteRowEditor) {
 			int32_t oldXZoom = currentSong->xZoom[navSysId];
-			int32_t zoomMagnitude = -offset;
+			// One zoom step whatever the size of the turn - everything below expects exactly +1 or -1
+			int32_t zoomMagnitude = (offset > 0) ? -1 : 1;
 			uint32_t newZoom = zoomMagnitude == -1 ? oldXZoom >> 1 : oldXZoom << 1;
 			uint32_t clipLengthMaxZoom = getMaxZoom();
 

@@ -353,8 +353,8 @@ Error StorageManager::loadInstrumentFromFile(Song* song, InstrumentClip* clip, O
 	// If that somehow didn't work...
 	if (error != Error::NONE || fileSuccess != FR_OK) {
 		D_PRINTLN("reading instrument file failed -  %s", name->get());
-		if (!fileSuccess) {
-			error = Error::SD_CARD;
+		if (error == Error::NONE) {
+			error = Error::SD_CARD; // The read was fine but closing the file wasn't
 		}
 
 deleteInstrumentAndGetOut:
@@ -456,8 +456,8 @@ Error StorageManager::loadMidiDeviceDefinitionFile(MIDIInstrument* midiInstrumen
 	// If that somehow didn't work...
 	if (error != Error::NONE || fileSuccess != FR_OK) {
 		D_PRINTLN("reading midi device definition file failed -  %s", fileName->get());
-		if (!fileSuccess) {
-			error = Error::SD_CARD;
+		if (error == Error::NONE) {
+			error = Error::SD_CARD; // The read was fine but closing the file wasn't
 		}
 
 		return error;
@@ -515,8 +515,8 @@ Error StorageManager::loadPatternFile(FilePointer* filePointer, String* fileName
 
 	// If that somehow didn't work...
 	if (error != Error::NONE || fileSuccess != FR_OK) {
-		if (!fileSuccess) {
-			error = Error::SD_CARD;
+		if (error == Error::NONE) {
+			error = Error::SD_CARD; // The read was fine but closing the file wasn't
 		}
 
 		return error;
@@ -543,8 +543,8 @@ Error StorageManager::loadFavouriteFile(FilePointer* filePointer, String* fileNa
 
 	// If that somehow didn't work...
 	if (error != Error::NONE || fileSuccess != FR_OK) {
-		if (!fileSuccess) {
-			error = Error::SD_CARD;
+		if (error == Error::NONE) {
+			error = Error::SD_CARD; // The read was fine but closing the file wasn't
 		}
 
 		return error;
@@ -722,7 +722,7 @@ Error StorageManager::openXMLFile(FilePointer* filePointer, XMLDeserializer& rea
 		return Error::NONE;
 	reader.closeWriter();
 
-	return Error::FILE_CORRUPTED;
+	return err; // E.g. FILE_FIRMWARE_VERSION_TOO_NEW, which callers tell the user about
 }
 
 Error StorageManager::openJsonFile(FilePointer* filePointer, JsonDeserializer& reader, char const* firstTagName,
@@ -738,7 +738,7 @@ Error StorageManager::openJsonFile(FilePointer* filePointer, JsonDeserializer& r
 		return Error::NONE;
 	reader.closeWriter();
 
-	return Error::FILE_CORRUPTED;
+	return err; // E.g. FILE_FIRMWARE_VERSION_TOO_NEW, which callers tell the user about
 }
 
 Error StorageManager::openDelugeFile(FileItem* currentFileItem, char const* firstTagName, char const* altTagName,

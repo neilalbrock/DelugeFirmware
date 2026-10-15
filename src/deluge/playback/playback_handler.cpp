@@ -152,10 +152,14 @@ void PlaybackHandler::routine() {
 	}
 
 	// If we're playing synced to analog clock input, auto-start mode, and there hasn't been a rising edge for a while,
-	// then stop
-	if (isExternalClockActive() && usingAnalogClockInput && analogClockInputAutoStart
-	    && (int32_t)(AudioEngine::audioSampleTimer - timeLastAnalogClockInputRisingEdge) > (kSampleRate >> 1)) {
-		endPlayback();
+	// then stop. "A while" is half a second, or three edges' worth if they're further apart than that - a slow clock at
+	// a low PPQN (e.g. quarter notes below 120 BPM) would otherwise stop and restart playback between every edge.
+	if (isExternalClockActive() && usingAnalogClockInput && analogClockInputAutoStart) {
+		int32_t timeout =
+		    std::max<int32_t>(kSampleRate >> 1, std::min<uint32_t>(timePerInputTickMovingAverage, INT32_MAX / 3) * 3);
+		if ((int32_t)(AudioEngine::audioSampleTimer - timeLastAnalogClockInputRisingEdge) > timeout) {
+			endPlayback();
+		}
 	}
 }
 
@@ -768,6 +772,12 @@ void PlaybackHandler::actionTimerTickPart2() {
 			if (fractionNextAnalogOutTick < fractionLastTimerTick) {
 				doTriggerClockOutTick();
 				fractionNextAnalogOutTick += internalTicksPer;
+				// Still behind (edges closer together than render windows can keep up with) - drop the backlog and
+				// carry on from here, rather than scheduling from behind the timer tick
+				if (fractionNextAnalogOutTick < fractionLastTimerTick) {
+					resyncAnalogOutTicksToInternalTicks();
+					fractionNextAnalogOutTick = (lastTriggerClockOutTickDone + 1) * internalTicksPer;
+				}
 			}
 			// Schedule another trigger clock output tick
 			scheduleTriggerClockOutTickParamsKnown(analogOutTicksPer, fractionLastTimerTick, fractionNextAnalogOutTick);
@@ -786,7 +796,11 @@ void PlaybackHandler::actionTimerTickPart2() {
 			// immediately otherwise set it to be done by the audio engine
 			if (fractionNextMIDIClockOutTick < fractionLastTimerTick) {
 				doMIDIClockOutTick();
-				fractionNextMIDIClockOutTick += midiClockOutTicksPer;
+				fractionNextMIDIClockOutTick += internalTicksPer; // One output tick - same units as above
+				if (fractionNextMIDIClockOutTick < fractionLastTimerTick) {
+					resyncMIDIClockOutTicksToInternalTicks();
+					fractionNextMIDIClockOutTick = (lastMIDIClockOutTickDone + 1) * internalTicksPer;
+				}
 			}
 
 			// Schedule another MIDI clock output tick
@@ -829,10 +843,12 @@ void PlaybackHandler::scheduleTriggerClockOutTickParamsKnown(uint32_t analogOutT
                                                              uint64_t fractionNextAnalogOutTick) {
 	if (fractionNextAnalogOutTick < nextTimerTickScheduled * analogOutTicksPer) {
 		triggerClockOutTickScheduled = true;
+		// If it's already due (we're behind), do it as soon as possible rather than let the unsigned subtraction wrap
+		uint64_t fractionAfterLastTimerTick =
+		    (fractionNextAnalogOutTick > fractionLastTimerTick) ? fractionNextAnalogOutTick - fractionLastTimerTick : 0;
 		timeNextTriggerClockOutTick =
 		    (timeLastTimerTickBig
-		     + ((uint64_t)((fractionNextAnalogOutTick - fractionLastTimerTick) * currentSong->timePerTimerTickBig))
-		           / analogOutTicksPer)
+		     + ((uint64_t)(fractionAfterLastTimerTick * currentSong->timePerTimerTickBig)) / analogOutTicksPer)
 		    >> 32;
 	}
 }
@@ -905,10 +921,13 @@ void PlaybackHandler::scheduleMIDIClockOutTickParamsKnown(uint32_t midiClockOutT
                                                           uint64_t fractionNextMIDIClockOutTick) {
 	if (fractionNextMIDIClockOutTick < nextTimerTickScheduled * midiClockOutTicksPer) {
 		midiClockOutTickScheduled = true;
+		// If it's already due (we're behind), do it as soon as possible rather than let the unsigned subtraction wrap
+		uint64_t fractionAfterLastTimerTick = (fractionNextMIDIClockOutTick > fractionLastTimerTick)
+		                                          ? fractionNextMIDIClockOutTick - fractionLastTimerTick
+		                                          : 0;
 		timeNextMIDIClockOutTick =
 		    (timeLastTimerTickBig
-		     + ((uint64_t)((fractionNextMIDIClockOutTick - fractionLastTimerTick) * currentSong->timePerTimerTickBig))
-		           / midiClockOutTicksPer)
+		     + ((uint64_t)(fractionAfterLastTimerTick * currentSong->timePerTimerTickBig)) / midiClockOutTicksPer)
 		    >> 32;
 	}
 }
@@ -1490,7 +1509,9 @@ void PlaybackHandler::doSongSwap(bool preservePlayPosition) {
 					}
 				}
 
-				preLoadedSong->timePerTimerTickBig = currentSong->timePerTimerTickBig;
+				// Not just the field - the reciprocal that synced LFO / delay / arp rates use must match. (Nothing gets
+				// rescheduled, as preLoadedSong isn't the current Song yet.)
+				preLoadedSong->setTimePerTimerTick(currentSong->timePerTimerTickBig, false);
 			}
 
 			// Any MIDI or gate notes wouldn't be stopped by our killAllVoices() call below
@@ -1608,6 +1629,9 @@ void PlaybackHandler::setupPlaybackUsingExternalClock(bool switchingFromInternal
 	// and when hearing these, well, this looks like infinite tempo.
 
 	numInputTickTimesCounted = 0;
+	// When switching over mid-play, lastInputTickReceived doesn't start at -1, so the first tick would otherwise be
+	// measured against whenever the last external clock run ended (or 0 after boot)
+	noPreviousInputTickTime = true;
 
 	stickyCurrentTimePerInternalTickInverse = veryCurrentTimePerInternalTickInverse =
 	    currentSong->divideByTimePerTimerTick; // Sets defaults
@@ -1665,6 +1689,9 @@ void PlaybackHandler::positionPointerReceived(uint8_t data1, uint8_t data2) {
 			return;
 		}
 
+		if (currentPlaybackMode == &arrangement) {
+			arrangement.stopClipsWithNoInstanceAt((int32_t)pos);
+		}
 		currentPlaybackMode->resetPlayPos((int32_t)pos);
 	}
 
@@ -1915,8 +1942,12 @@ void PlaybackHandler::inputTick(bool fromTriggerClock, uint32_t time) {
 	lastInputTickReceived++;
 
 	// We do need an accurate measure of internal tick time immediately, for syncing LFOs
-	if (lastInputTickReceived != 0) {
-		uint32_t timeLastInputTickTook = timeThisInputTick - timeLastInputTicks[0];
+	bool havePreviousInputTickTime = !noPreviousInputTickTime;
+	noPreviousInputTickTime = false;
+	uint32_t timeLastInputTickTook = timeThisInputTick - timeLastInputTicks[0];
+	// Clocks that arrive together (several in one USB packet, e.g. after a Continue) share a timestamp. There's no
+	// interval to learn from those, and a zero one would divide by zero below.
+	if (lastInputTickReceived != 0 && havePreviousInputTickTime && timeLastInputTickTook != 0) {
 
 		D_PRINTLN("time since last:  %d", timeLastInputTickTook);
 
@@ -1926,7 +1957,7 @@ void PlaybackHandler::inputTick(bool fromTriggerClock, uint32_t time) {
 
 		uint32_t thisTimePerInternalTick = timeLastInputTickTook * inputTicksPer / internalTicksPer;
 
-		veryCurrentTimePerInternalTickInverse = 2147483647 / ((thisTimePerInternalTick * 3) >> 1);
+		veryCurrentTimePerInternalTickInverse = 2147483647 / std::max<uint32_t>(1, (thisTimePerInternalTick * 3) >> 1);
 
 		// Lowpass
 		int32_t distanceToGo = thisTimePerInternalTick - lowpassedTimePerInternalTick;
@@ -1954,7 +1985,8 @@ void PlaybackHandler::inputTick(bool fromTriggerClock, uint32_t time) {
 			slowpassedTimePerInternalTick = lowpassedTimePerInternalTick << slowpassedTimePerInternalTickSlowness;
 			stickyTimePerInternalTick = lowpassedTimePerInternalTick;
 
-			stickyCurrentTimePerInternalTickInverse = 2147483647 / ((stickyTimePerInternalTick * 3) >> 1);
+			stickyCurrentTimePerInternalTickInverse =
+			    2147483647 / std::max<uint32_t>(1, (stickyTimePerInternalTick * 3) >> 1);
 		}
 		else if ((slowpassedTimePerInternalTick >> (slowpassedTimePerInternalTickSlowness + 2))
 		             > multiply_32x32_rshift32(1084479242, stickyTimePerInternalTick)
@@ -1964,7 +1996,8 @@ void PlaybackHandler::inputTick(bool fromTriggerClock, uint32_t time) {
 			stickyTimePerInternalTick = lowpassedTimePerInternalTick =
 			    slowpassedTimePerInternalTick >> slowpassedTimePerInternalTickSlowness;
 
-			stickyCurrentTimePerInternalTickInverse = 2147483647 / ((stickyTimePerInternalTick * 3) >> 1);
+			stickyCurrentTimePerInternalTickInverse =
+			    2147483647 / std::max<uint32_t>(1, (stickyTimePerInternalTick * 3) >> 1);
 		}
 	}
 
@@ -2200,6 +2233,13 @@ void PlaybackHandler::commandNudgeClock(int8_t offset) {
 
 void PlaybackHandler::commandEditClockOutScale(int8_t offset) {
 	// If playing synced, double or halve our own playing speed relative to the outside world
+	// Don't take the tick magnitude outside what the rest of the timing code can cope with
+	int32_t magnitudeChange = isExternalClockActive() ? offset : -offset;
+	int32_t newInputTickMagnitude = currentSong->getInputTickMagnitude() + magnitudeChange;
+	if (newInputTickMagnitude < Song::kMinInputTickMagnitude || newInputTickMagnitude > Song::kMaxInputTickMagnitude) {
+		return;
+	}
+
 	if (isExternalClockActive()) {
 		if (offset < 0 || currentSong->mayDoubleTempo()) { // Know when to disallow tempo doubling
 
@@ -2651,10 +2691,12 @@ void PlaybackHandler::resyncInternalTicksToInputTicks(Song* song) {
 // This is that special MIDI command for Todd T
 void PlaybackHandler::forceResetPlayPos(Song* song, bool restartingPlaybackAtBeginning) {
 	if (playbackState) {
+		// endPlayback() clears playbackState, after which isExternalClockActive() is always false
+		bool wasExternalClock = isExternalClockActive();
 
 		endPlayback();
 
-		if (isExternalClockActive()) {
+		if (wasExternalClock) {
 			setupPlaybackUsingExternalClock();
 		}
 
@@ -2909,7 +2951,9 @@ bool PlaybackHandler::tryGlobalMIDICommands(MIDICable& cable, int32_t channel, i
 		else if (midiEngine.globalMIDICommands[c].equalsNoteOrCC(&cable, channel, note)) {
 			switch (command) {
 			case GlobalMIDICommand::PLAYBACK_RESTART:
-				if (recording != RecordingMode::ARRANGEMENT) {
+				// Like the play button, don't restart while following external clock - the clock source decides where
+				// playback is
+				if (recording != RecordingMode::ARRANGEMENT && !isExternalClockActive()) {
 					forceResetPlayPos(currentSong, true);
 				}
 				break;

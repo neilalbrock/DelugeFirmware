@@ -1170,7 +1170,8 @@ void InstrumentClipView::copyNotes(Serializer* writer, bool selectedDrumOnly) {
 			noteRowYDisplay = yVisual - getCurrentInstrumentClip()->yScroll;
 		}
 		if (isFilteredCopy) {
-			if (!auditionPadIsPressed[noteRowYDisplay])
+			// Rows scrolled off screen can't have their audition pad held
+			if (noteRowYDisplay < 0 || noteRowYDisplay >= kDisplayHeight || !auditionPadIsPressed[noteRowYDisplay])
 				continue;
 		}
 		if (getCurrentOutputType() == OutputType::KIT && thisNoteRow->drum != getCurrentKit()->selectedDrum
@@ -4484,6 +4485,11 @@ ActionResult InstrumentClipView::scrollVertical(int32_t scrollAmount, bool inCar
 
 	if (modelStack == nullptr) {
 		return ActionResult::DEALT_WITH;
+	}
+
+	// Dragging a row swaps it with just its neighbour, so scroll just one row to match, however fast the turn
+	if (draggingNoteRow && scrollAmount != 0) {
+		scrollAmount = (scrollAmount > 0) ? 1 : -1;
 	}
 
 	InstrumentClip* clip = getCurrentInstrumentClip();

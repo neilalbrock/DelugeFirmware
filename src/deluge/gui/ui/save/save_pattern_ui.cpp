@@ -186,7 +186,7 @@ fail:
 
 	instrumentClipView.copyNotesToFile(writer, selectedDrumOnly);
 
-	writer.closeFileAfterWriting();
+	error = writer.closeFileAfterWriting();
 
 	display->removeWorkingAnimation();
 	if (error != Error::NONE) {

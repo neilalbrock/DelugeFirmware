@@ -36,4 +36,5 @@ public:
 	AutoParamState state;
 	bool paramManagerIsNoteRows;
 	int8_t summaryIndex;
+	bool snapshotTaken; // False if there wasn't the memory to copy the automation
 };

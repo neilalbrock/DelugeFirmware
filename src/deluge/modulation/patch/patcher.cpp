@@ -74,12 +74,10 @@ void Patcher::performPatching(uint32_t sourcesChanged, Sound& sound, ParamManage
 		return;
 	}
 
-	// First, "range" Destinations
+	// First, "range" Destinations. Do all of them, not just those whose sources changed: rangeFinalValues is shared by
+	// every voice and Sound (the cables point into it), so what's there now may be some other patcher's. Anything
+	// below that reads them gets this patcher's values.
 	for (int32_t i = 0; destination->destinationParamDescriptor.data < (uint32_t)0xFFFFFF00; destination++, i++) {
-		if (!(destination->sources & sourcesChanged)) {
-			continue; // And don't increment i.
-		}
-
 		int32_t cables_combination = combineCablesLinearForRangeParam(destination, param_manager);
 		rangeFinalValues[i] = getFinalParameterValueLinear(536870912, cables_combination);
 	}

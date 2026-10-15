@@ -172,7 +172,7 @@ fail:
 
 	midiInstrumentToSave->writeDeviceDefinitionFile(writer, false);
 
-	writer.closeFileAfterWriting();
+	error = writer.closeFileAfterWriting();
 
 	display->removeWorkingAnimation();
 	if (error != Error::NONE) {

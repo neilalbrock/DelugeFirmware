@@ -2729,7 +2729,8 @@ ActionResult ArrangerView::horizontalEncoderAction(int32_t offset) {
 
 			int32_t oldXZoom = currentSong->xZoom[NAVIGATION_ARRANGEMENT];
 
-			int32_t zoomMagnitude = -offset;
+			// One zoom step whatever the size of the turn - everything below expects exactly +1 or -1
+			int32_t zoomMagnitude = (offset > 0) ? -1 : 1;
 
 			// Constrain to zoom limits
 			if (zoomMagnitude < 0) {

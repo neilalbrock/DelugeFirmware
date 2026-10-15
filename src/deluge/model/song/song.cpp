@@ -1692,7 +1692,8 @@ unknownTag:
 			}
 
 			else if (!strcmp(tagName, "inputTickMagnitude")) {
-				insideWorldTickMagnitude = reader.readTagOrAttributeValueInt();
+				insideWorldTickMagnitude = std::clamp<int32_t>(reader.readTagOrAttributeValueInt(),
+				                                               kMinInputTickMagnitude, kMaxInputTickMagnitude);
 				reader.exitTag("inputTickMagnitude");
 			}
 
@@ -2525,8 +2526,18 @@ void Song::renderAudio(std::span<StereoSample> outputBuffer, int32_t* reverbBuff
 
 		bool isClipActiveNow =
 		    (output->getActiveClip() && isClipActive(output->getActiveClip()->getClipBeingRecordedFrom()));
+		// An output being recorded by a monitoring (sampler / looper) AudioOutput is normally rendered by that, not
+		// here - unless it won't be this time (e.g. a sampler whose clip has been recorded, so isn't monitoring any
+		// more)
+		bool shouldRender = output->shouldRenderInSong();
+		if (!shouldRender) {
+			Output* monitor = output->getOutputRecordingThis();
+			shouldRender = !(monitor && monitor->type == OutputType::AUDIO && monitor->inValidState
+			                 && monitor->shouldRenderInSong()
+			                 && static_cast<AudioOutput*>(monitor)->willMonitorRecordingSource(this));
+		}
 		ENTER_CRITICAL_SECTION();
-		if (output->shouldRenderInSong()) {
+		if (shouldRender) {
 			output->renderOutput(modelStack, outputBuffer, reverbBuffer, volumePostFX >> 1, sideChainHitPending,
 			                     !isClipActiveNow, isClipActiveNow);
 		}
@@ -3154,6 +3165,21 @@ void Song::setBPM(float tempoBPM, bool shouldLogAction) {
 	}
 
 	tempoParam->autoParam->setValuePossiblyForRegion(intTempo, tempoParam, pos, length);
+
+	// Editing the tempo at a held pad only changes what's recorded there. The live tempo only follows if the
+	// arrangement is playing within that region - otherwise make sure it follows whatever the automation says at the
+	// playhead.
+	if (pos != -1) {
+		bool regionCoversPlayhead = false;
+		if (arrangement.hasPlaybackActive()) {
+			int32_t livePos = arrangement.getLivePos();
+			regionCoversPlayhead = (livePos >= pos && livePos < pos + length);
+		}
+		if (!regionCoversPlayhead) {
+			intBPM = 0; // So updateBPMFromAutomation() resyncs on the next tick
+			return;
+		}
+	}
 	setBPMInner(tempoBPM, shouldLogAction);
 }
 

@@ -161,6 +161,17 @@ void HIDSysex::sendOLEDDataDelta(MIDICable& cable, bool force) {
 
 	uint8_t* current = deluge::hid::display::OLED::oledCurrentImage[0];
 
+	// Normally made when OLED mirroring is requested, but not if mirroring started on 7-segment and the display was
+	// switched since, or the allocation failed then
+	if (oledDeltaImage == nullptr) {
+		oledDeltaImage = (uint8_t*)GeneralMemoryAllocator::get().allocMaxSpeed(
+		    sizeof(uint8_t[OLED_MAIN_HEIGHT_PIXELS >> 3][OLED_MAIN_WIDTH_PIXELS]));
+		if (oledDeltaImage == nullptr) {
+			return;
+		}
+		force = true; // Nothing to compare against yet
+	}
+
 	int32_t first_change = 9000;
 	int32_t last_change = 0;
 	int32_t* blkdata_new = (int32_t*)current;

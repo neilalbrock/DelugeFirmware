@@ -54,10 +54,15 @@ void MIDICableDINPorts::sendSysex(const uint8_t* data, int32_t len) {
 		return;
 	}
 
-	// NB: beware of MIDI_TX_BUFFER_SIZE
+	// The MIDI/gate output timer ISR writes queued messages to this buffer too. Hold it off for the whole message, or
+	// a status byte from it in the middle would end the SysEx at the receiver.
+	CriticalSectionGuard guard;
+	// If it won't all fit, drop it rather than overwrite bytes still waiting to go. NB: anything as big as
+	// MIDI_TX_BUFFER_SIZE never fits.
+	if (uartGetTxBufferSpace(UART_ITEM_MIDI) < len) {
+		return;
+	}
 	for (int32_t i = 0; i < len; i++) {
-		// The MIDI/gate output timer ISR writes to this buffer too
-		CriticalSectionGuard guard;
 		bufferMIDIUart(data[i]);
 	}
 }

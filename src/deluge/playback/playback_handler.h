@@ -121,6 +121,7 @@ public:
 	uint32_t timeLastInputTicks[kNumInputTicksForMovingAverage];
 	uint32_t timePerInputTickMovingAverage; // 0 means that a default will be set the first time it's used
 	uint8_t numInputTickTimesCounted;
+	bool noPreviousInputTickTime = false; // timeLastInputTicks[0] isn't from this run of external clock
 
 	bool tempoMagnitudeMatchingActiveNow;
 	// unsigned long timeFirstInputTick; // First tick received for current tally
