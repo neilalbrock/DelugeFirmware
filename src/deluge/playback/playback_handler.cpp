@@ -1689,6 +1689,9 @@ void PlaybackHandler::positionPointerReceived(uint8_t data1, uint8_t data2) {
 			return;
 		}
 
+		if (currentPlaybackMode == &arrangement) {
+			arrangement.stopClipsWithNoInstanceAt((int32_t)pos);
+		}
 		currentPlaybackMode->resetPlayPos((int32_t)pos);
 	}
 
