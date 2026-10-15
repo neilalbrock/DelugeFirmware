@@ -309,6 +309,12 @@ void GranularProcessor::getBuffer() {
 		void* grainBufferMemory = GeneralMemoryAllocator::get().allocStealable<GrainBuffer>();
 		if (grainBufferMemory) {
 			grainBuffer = new (grainBufferMemory) GrainBuffer(this);
+			// A new buffer holds whatever was in that memory before (we may be here because the old one got stolen),
+			// so grains still playing from the old one mustn't carry on reading it
+			for (auto& grain : grains) {
+				grain.length = 0;
+			}
+			grainInitialized = false;
 		}
 		else {}
 	}
