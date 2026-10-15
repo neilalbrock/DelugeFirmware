@@ -278,12 +278,14 @@ void SampleMarkerEditor::selectEncoderAction(int8_t offset) {
 	int32_t oldPos = cols[util::to_underlying(markerType)].pos;
 	int32_t newCol = oldCol + offset;
 
-	// Make sure we don't drive one marker into the other
+	// Make sure we don't drive one marker into or past another - a fast turn can move several columns at once
+	int32_t lowestCol = std::min(oldCol, newCol);
+	int32_t highestCol = std::max(oldCol, newCol);
 	for (int32_t c = 0; c < kNumMarkerTypes; c++) {
-		if (c == util::to_underlying(markerType)) {
+		if (c == util::to_underlying(markerType) || cols[c].colOnScreen == kInvalidColumn) {
 			continue;
 		}
-		if (cols[c].colOnScreen == oldCol || cols[c].colOnScreen == newCol) {
+		if (cols[c].colOnScreen >= lowestCol && cols[c].colOnScreen <= highestCol) {
 			return;
 		}
 	}
