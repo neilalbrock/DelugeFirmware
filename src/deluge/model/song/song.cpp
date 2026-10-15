@@ -1692,7 +1692,8 @@ unknownTag:
 			}
 
 			else if (!strcmp(tagName, "inputTickMagnitude")) {
-				insideWorldTickMagnitude = reader.readTagOrAttributeValueInt();
+				insideWorldTickMagnitude = std::clamp<int32_t>(reader.readTagOrAttributeValueInt(),
+				                                               kMinInputTickMagnitude, kMaxInputTickMagnitude);
 				reader.exitTag("inputTickMagnitude");
 			}
 

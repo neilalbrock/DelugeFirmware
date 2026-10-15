@@ -2230,6 +2230,13 @@ void PlaybackHandler::commandNudgeClock(int8_t offset) {
 
 void PlaybackHandler::commandEditClockOutScale(int8_t offset) {
 	// If playing synced, double or halve our own playing speed relative to the outside world
+	// Don't take the tick magnitude outside what the rest of the timing code can cope with
+	int32_t magnitudeChange = isExternalClockActive() ? offset : -offset;
+	int32_t newInputTickMagnitude = currentSong->getInputTickMagnitude() + magnitudeChange;
+	if (newInputTickMagnitude < Song::kMinInputTickMagnitude || newInputTickMagnitude > Song::kMaxInputTickMagnitude) {
+		return;
+	}
+
 	if (isExternalClockActive()) {
 		if (offset < 0 || currentSong->mayDoubleTempo()) { // Know when to disallow tempo doubling
 

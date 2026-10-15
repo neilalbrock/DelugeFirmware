@@ -185,6 +185,10 @@ public:
 	String getSongFullPath();
 	void setSongFullPath(const char* fullPath);
 	int32_t getInputTickMagnitude() const { return insideWorldTickMagnitude + insideWorldTickMagnitudeOffsetFromBPM; }
+	/// Limits for getInputTickMagnitude() that the user can reach or a file can give: below this a 16th note is under a
+	/// tick long (lengths become 0 and get divided by), and far above it the tick-ratio shifts overflow
+	static constexpr int32_t kMinInputTickMagnitude = -2;
+	static constexpr int32_t kMaxInputTickMagnitude = 16;
 
 	GlobalEffectableForSong globalEffectable;
 
