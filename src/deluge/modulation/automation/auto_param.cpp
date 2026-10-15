@@ -1982,13 +1982,19 @@ addNewNodeAt0IfNecessary:
 		}
 	}
 
-	// Or if no nodes afterwards
+	// Or if fewer than 2 nodes afterwards
 	else {
+		// With one node left, that's the value for the whole (new) length - not whatever was last playing
+		bool oneNodeLeft = (newNumNodes == 1);
+		int32_t valueLeft = oneNodeLeft ? nodes.getElement(0)->value : 0;
 		if (action) {
 			action->recordParamChangeIfNotAlreadySnapshotted(modelStack, true); // Steal
 		}
 		nodes.empty();                 // Delete them - either if no action, or if the above chose not to steal them.
 		resetInterpolationIncrement(); // In case we were interpolating.
+		if (oneNodeLeft) {
+			currentValue = valueLeft;
+		}
 	}
 }
 

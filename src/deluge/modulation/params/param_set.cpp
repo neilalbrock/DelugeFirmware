@@ -258,8 +258,14 @@ void ParamSet::trimToLength(uint32_t newLength, ModelStackWithParamCollection* m
 	AutoParam* param = &params[p];
 	ModelStackWithAutoParam* modelStackWithAutoParam = modelStack->addAutoParam(p, param);
 
+	int32_t oldValue = params[p].getCurrentValue();
 	params[p].trimToLength(newLength, action, modelStackWithAutoParam);
-	if (!params[p].isAutomated()) {
+	bool automatedNow = params[p].isAutomated();
+	if (params[p].getCurrentValue() != oldValue) {
+		// Let whatever uses the param know (this also updates the automated flags)
+		notifyParamModifiedInSomeWay(modelStackWithAutoParam, oldValue, true, true, automatedNow);
+	}
+	else if (!automatedNow) {
 		paramHasNoAutomationNow(modelStack, p);
 	}
 
