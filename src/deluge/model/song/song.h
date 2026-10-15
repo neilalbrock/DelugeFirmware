@@ -441,6 +441,8 @@ public:
 	// Tempo automation
 	void clearTempoAutomation();
 	void updateBPMFromAutomation();
+	/// Makes the next updateBPMFromAutomation() apply the automated tempo even if it hasn't changed
+	void forgetAutomatedBPM() { intBPM = 0; }
 
 	float calculateBPM() {
 		float timePerTimerTick = getTimePerTimerTickFloat();

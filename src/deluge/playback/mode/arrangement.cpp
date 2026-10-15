@@ -347,6 +347,7 @@ justDoArp:
 void Arrangement::resetPlayPos(int32_t newPos, bool doingComplete, int32_t buttonPressLatency) {
 
 	AudioEngine::bypassCulling = true;
+	currentSong->forgetAutomatedBPM(); // So tempo automation gets applied afresh from the new position
 
 	playbackStartedAtPos = newPos;
 	lastProcessedPos = newPos;

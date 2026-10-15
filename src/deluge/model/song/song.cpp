@@ -3154,6 +3154,21 @@ void Song::setBPM(float tempoBPM, bool shouldLogAction) {
 	}
 
 	tempoParam->autoParam->setValuePossiblyForRegion(intTempo, tempoParam, pos, length);
+
+	// Editing the tempo at a held pad only changes what's recorded there. The live tempo only follows if the
+	// arrangement is playing within that region - otherwise make sure it follows whatever the automation says at the
+	// playhead.
+	if (pos != -1) {
+		bool regionCoversPlayhead = false;
+		if (arrangement.hasPlaybackActive()) {
+			int32_t livePos = arrangement.getLivePos();
+			regionCoversPlayhead = (livePos >= pos && livePos < pos + length);
+		}
+		if (!regionCoversPlayhead) {
+			intBPM = 0; // So updateBPMFromAutomation() resyncs on the next tick
+			return;
+		}
+	}
 	setBPMInner(tempoBPM, shouldLogAction);
 }
 
