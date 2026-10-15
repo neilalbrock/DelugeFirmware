@@ -1941,8 +1941,10 @@ void PlaybackHandler::inputTick(bool fromTriggerClock, uint32_t time) {
 	// We do need an accurate measure of internal tick time immediately, for syncing LFOs
 	bool havePreviousInputTickTime = !noPreviousInputTickTime;
 	noPreviousInputTickTime = false;
-	if (lastInputTickReceived != 0 && havePreviousInputTickTime) {
-		uint32_t timeLastInputTickTook = timeThisInputTick - timeLastInputTicks[0];
+	uint32_t timeLastInputTickTook = timeThisInputTick - timeLastInputTicks[0];
+	// Clocks that arrive together (several in one USB packet, e.g. after a Continue) share a timestamp. There's no
+	// interval to learn from those, and a zero one would divide by zero below.
+	if (lastInputTickReceived != 0 && havePreviousInputTickTime && timeLastInputTickTook != 0) {
 
 		D_PRINTLN("time since last:  %d", timeLastInputTickTook);
 
@@ -1952,7 +1954,7 @@ void PlaybackHandler::inputTick(bool fromTriggerClock, uint32_t time) {
 
 		uint32_t thisTimePerInternalTick = timeLastInputTickTook * inputTicksPer / internalTicksPer;
 
-		veryCurrentTimePerInternalTickInverse = 2147483647 / ((thisTimePerInternalTick * 3) >> 1);
+		veryCurrentTimePerInternalTickInverse = 2147483647 / std::max<uint32_t>(1, (thisTimePerInternalTick * 3) >> 1);
 
 		// Lowpass
 		int32_t distanceToGo = thisTimePerInternalTick - lowpassedTimePerInternalTick;
@@ -1980,7 +1982,8 @@ void PlaybackHandler::inputTick(bool fromTriggerClock, uint32_t time) {
 			slowpassedTimePerInternalTick = lowpassedTimePerInternalTick << slowpassedTimePerInternalTickSlowness;
 			stickyTimePerInternalTick = lowpassedTimePerInternalTick;
 
-			stickyCurrentTimePerInternalTickInverse = 2147483647 / ((stickyTimePerInternalTick * 3) >> 1);
+			stickyCurrentTimePerInternalTickInverse =
+			    2147483647 / std::max<uint32_t>(1, (stickyTimePerInternalTick * 3) >> 1);
 		}
 		else if ((slowpassedTimePerInternalTick >> (slowpassedTimePerInternalTickSlowness + 2))
 		             > multiply_32x32_rshift32(1084479242, stickyTimePerInternalTick)
@@ -1990,7 +1993,8 @@ void PlaybackHandler::inputTick(bool fromTriggerClock, uint32_t time) {
 			stickyTimePerInternalTick = lowpassedTimePerInternalTick =
 			    slowpassedTimePerInternalTick >> slowpassedTimePerInternalTickSlowness;
 
-			stickyCurrentTimePerInternalTickInverse = 2147483647 / ((stickyTimePerInternalTick * 3) >> 1);
+			stickyCurrentTimePerInternalTickInverse =
+			    2147483647 / std::max<uint32_t>(1, (stickyTimePerInternalTick * 3) >> 1);
 		}
 	}
 
