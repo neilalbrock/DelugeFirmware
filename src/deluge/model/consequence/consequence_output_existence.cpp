@@ -28,8 +28,6 @@ ConsequenceOutputExistence::ConsequenceOutputExistence(Output* newOutput, Existe
 	type = newType;
 }
 
-// TODO: wait a minute, do we have a memory leak here? Never deletes the Output?
-
 Error ConsequenceOutputExistence::revert(TimeType time, ModelStack* modelStack) {
 	if (time != util::to_underlying(type)) { // Re-create
 		modelStack->song->addOutput(output, true);
@@ -46,4 +44,13 @@ Error ConsequenceOutputExistence::revert(TimeType time, ModelStack* modelStack) 
 	}
 
 	return Error::NONE;
+}
+
+void ConsequenceOutputExistence::prepareForDestruction(int32_t whichQueueActionIn, Song* song) {
+	// If the Action is being thrown away from the queue in which the Output doesn't exist, nothing else refers to it
+	// any more. The only user is a cloned output for an auto-overdub, whose ConsequenceClipExistence was added just
+	// before this one - so once undone (which reverses the list) it comes first, and has freed the Clip by now
+	if (whichQueueActionIn != util::to_underlying(type)) {
+		song->deleteOutput(output);
+	}
 }
