@@ -17,7 +17,7 @@
 
 #include "model/sample/sample_low_level_reader.h"
 #include "definitions_cxx.hpp"
-#include "dsp/interpolate/interpolate.h"
+#include "dsp/interpolate/interpolate_inline.hpp"
 #include "dsp/stereo_sample.h"
 #include "dsp/timestretch/time_stretcher.h"
 #include "hid/display/display.h"

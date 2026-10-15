@@ -13,8 +13,9 @@ namespace deluge::dsp {
 struct [[gnu::hot]] Interpolator {
 
 	Interpolator() = default;
-	StereoSample interpolate(size_t channels, int32_t whichKernel, uint32_t oscPos);
-	StereoSample interpolateLinear(size_t channels, uint32_t oscPos);
+	// Defined in interpolate_inline.hpp, which callers must include
+	[[gnu::always_inline]] inline StereoSample interpolate(size_t channels, int32_t whichKernel, uint32_t oscPos);
+	[[gnu::always_inline]] inline StereoSample interpolateLinear(size_t channels, uint32_t oscPos);
 
 	[[gnu::always_inline]] constexpr void pushL(int16_t value) {
 #pragma unroll
