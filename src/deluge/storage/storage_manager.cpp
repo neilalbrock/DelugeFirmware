@@ -952,6 +952,7 @@ void FileWriter::resetWriter() {
 	fileWriteBufferCurrentPos = 0;
 	fileTotalBytesWritten = 0;
 	fileAccessFailedDuringWrite = false;
+	hashing = false;
 }
 
 FRESULT FileWriter::closeWriter() {
@@ -976,6 +977,11 @@ void FileWriter::writeBlock(uint8_t* block, uint32_t size) {
 extern "C" void routineForSD(void);
 
 void FileWriter::writeByte(int8_t b) {
+	if (hashing) {
+		contentHash = (contentHash ^ static_cast<uint8_t>(b)) * 16777619u; // FNV-1a prime
+		return;
+	}
+
 	if (writeClusterBuffer == nullptr) [[unlikely]] {
 		fileAccessFailedDuringWrite = true;
 		return;

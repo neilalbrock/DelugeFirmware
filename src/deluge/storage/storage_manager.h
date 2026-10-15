@@ -104,11 +104,24 @@ public:
 		callRoutines = false;
 	}
 
+	/// Until endHashing(), hash what's written rather than writing it, so a caller can tell whether a file's contents
+	/// would change without touching the card. reset() before writing for real.
+	void beginHashing() {
+		hashing = true;
+		contentHash = 2166136261u; // FNV-1a offset basis
+	}
+	uint32_t endHashing() {
+		hashing = false;
+		return contentHash;
+	}
+
 protected:
 	void resetWriter();
 	Error writeBufferToFile();
 	bool memoryBased = false;
 	bool callRoutines = true;
+	bool hashing = false;
+	uint32_t contentHash = 0;
 	uint8_t indentAmount;
 	char* writeClusterBuffer;
 	void* clusterBufferAllocation = nullptr; // What writeClusterBuffer was carved out of

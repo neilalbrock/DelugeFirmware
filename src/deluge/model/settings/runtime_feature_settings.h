@@ -121,7 +121,13 @@ protected:
 	String startupSong;
 
 private:
+	void writeSettings(Serializer& writer, char const* startupSongPath);
+	uint32_t hashSettings(char const* startupSongPath);
+
 	ResizeableArray unknownSettings;
+	// Hash of the file's contents as last read or written, so unchanged settings needn't be written again
+	uint32_t savedHash = 0;
+	bool savedHashKnown = false;
 
 public:
 	friend class deluge::gui::menu_item::runtime_feature::Setting;

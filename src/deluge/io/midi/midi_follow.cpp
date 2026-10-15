@@ -130,6 +130,7 @@ void MidiFollow::factoryReset(bool showPopup) {
 	}
 
 	f_unlink(MIDI_FOLLOW_XML);
+	savedDefaultsHashKnown = false;
 	for (auto& midiChannelType : midiEngine.midiFollowChannelType) {
 		midiChannelType.clear();
 	}
@@ -1630,13 +1631,36 @@ bool MidiFollow::isFeedbackEnabled() {
 /// create default XML file and write defaults
 /// I should check if file exists before creating one
 bool MidiFollow::writeDefaultsToFile() {
+	// This gets called on every exit from the settings menu, even mid-performance - don't stall the card (and playback)
+	// rewriting a file that wouldn't change
+	uint32_t hash = hashDefaults();
+	if (savedDefaultsHashKnown && hash == savedDefaultsHash) {
+		return true;
+	}
+
 	// MidiFollow.xml
 	Error error = StorageManager::createXMLFile(MIDI_FOLLOW_XML, smSerializer, true);
 	if (error != Error::NONE) {
 		return false;
 	}
 	Serializer& writer = GetSerializer();
+	writeDefaults(writer);
+	if (writer.closeFileAfterWriting() != Error::NONE) {
+		return false;
+	}
+	savedDefaultsHash = hash;
+	savedDefaultsHashKnown = true;
+	return true;
+}
 
+uint32_t MidiFollow::hashDefaults() {
+	smSerializer.reset();
+	smSerializer.beginHashing();
+	writeDefaults(smSerializer);
+	return smSerializer.endHashing();
+}
+
+void MidiFollow::writeDefaults(Serializer& writer) {
 	//<defaults>
 	writer.writeOpeningTagBeginning(MIDI_DEFAULTS_TAG);
 	writer.writeOpeningTagEnd();
@@ -1654,8 +1678,6 @@ bool MidiFollow::writeDefaultsToFile() {
 	writer.writeClosingTag(MIDI_DEFAULTS_SETTINGS_TAG);
 
 	writer.writeClosingTag(MIDI_DEFAULTS_TAG);
-
-	return writer.closeFileAfterWriting() == Error::NONE;
 }
 
 /// convert paramID to a paramName to write to XML
@@ -1870,6 +1892,11 @@ void MidiFollow::readDefaultsFromFile() {
 	// Write the migrated settings back out over the <settings> block we just skipped
 	if (FlashStorage::areLegacyMidiFollowSettingsPending()) {
 		completeLegacyFlashMigration(writeDefaultsToFile());
+	}
+	// Otherwise what's on the card matches what we hold, so there's nothing to write until something changes
+	else {
+		savedDefaultsHash = hashDefaults();
+		savedDefaultsHashKnown = true;
 	}
 }
 

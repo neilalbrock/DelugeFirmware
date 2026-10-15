@@ -33,6 +33,8 @@
 #include "util/firmware_version.h"
 #include "util/functions.h"
 #include "util/misc.h"
+#include <algorithm>
+#include <array>
 #include <cstdint>
 #include <modulation/patch/patch_cable.h>
 
@@ -1154,6 +1156,15 @@ void writeSettings() {
 
 	buffer[196] = util::to_underlying(screensaverMode);
 	buffer[197] = screensaverTimeoutMinutes;
+
+	// Erasing and reprogramming the sector holds everything up, audio included, and this gets called on every exit
+	// from the settings menu - so leave it be if nothing's changed
+	std::array<uint8_t, 256> current;
+	R_SFLASH_ByteRead(0x80000 - 0x1000, current.data(), current.size(), SPIBSC_CH, SPIBSC_CMNCR_BSZ_SINGLE, SPIBSC_1BIT,
+	                  SPIBSC_OUTPUT_ADDR_24);
+	if (std::equal(current.begin(), current.end(), buffer.begin())) {
+		return;
+	}
 
 	R_SFLASH_EraseSector(0x80000 - 0x1000, SPIBSC_CH, SPIBSC_CMNCR_BSZ_SINGLE, 1, SPIBSC_OUTPUT_ADDR_24);
 	R_SFLASH_ByteProgram(0x80000 - 0x1000, buffer.data(), 256, SPIBSC_CH, SPIBSC_CMNCR_BSZ_SINGLE, SPIBSC_1BIT,

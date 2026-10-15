@@ -170,6 +170,12 @@ private:
 	void writeFeedbackSettingsToFile(Serializer& writer);
 	void writeDisplayParamSettingToFile(Serializer& writer);
 
+	void writeDefaults(Serializer& writer);
+	uint32_t hashDefaults();
+	// Hash of MIDIFollow.XML's contents as last read or written, so unchanged defaults needn't be written again
+	uint32_t savedDefaultsHash = 0;
+	bool savedDefaultsHashKnown = false;
+
 	// Loading
 	bool successfullyReadDefaultsFromFile;
 

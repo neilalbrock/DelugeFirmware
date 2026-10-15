@@ -21,6 +21,7 @@
 #include "model/song/song.h"
 #include "storage/storage_manager.h"
 #include "util/d_string.h"
+#include "version.h"
 #include <cstring>
 #include <string_view>
 
@@ -255,6 +256,8 @@ void RuntimeFeatureSettings::factoryReset(bool showPopup) {
 }
 
 void RuntimeFeatureSettings::readSettingsFromFile() {
+	savedHashKnown = false;
+
 	FilePointer fp;
 	// CommunityFeatures.XML
 	bool success = StorageManager::fileExists(RUNTIME_FEATURE_SETTINGS_FILE, &fp);
@@ -284,17 +287,23 @@ void RuntimeFeatureSettings::readSettingsFromFile() {
 	String currentName;
 	int32_t currentValue = 0;
 	char const* currentTag = nullptr;
+	bool readCleanly = true;
+	bool stampedByThisFirmware = false;
 
 	while (*(currentTag = reader.readNextTagOrAttributeName())) {
 
 		if (strcmp(currentTag, "startupSong") == 0) {
 			reader.readTagOrAttributeValueString(&startupSong);
 		}
+		if (strcmp(currentTag, "firmwareVersion") == 0) {
+			stampedByThisFirmware = strcmp(reader.readTagOrAttributeValue(), kFirmwareVersionStringShort) == 0;
+		}
 		if (strcmp(currentTag, TAG_RUNTIME_FEATURE_SETTING) == 0) {
 			// Read name
 			currentTag = reader.readNextTagOrAttributeName();
 			if (strcmp(currentTag, TAG_RUNTIME_FEATURE_SETTING_ATTR_NAME) != 0) {
 				display->displayPopup("Community file err");
+				readCleanly = false;
 				break;
 			}
 			reader.readTagOrAttributeValueString(&currentName);
@@ -304,6 +313,7 @@ void RuntimeFeatureSettings::readSettingsFromFile() {
 			currentTag = reader.readNextTagOrAttributeName();
 			if (strcmp(currentTag, TAG_RUNTIME_FEATURE_SETTING_ATTR_VALUE) != 0) {
 				display->displayPopup("Community file err");
+				readCleanly = false;
 				break;
 			}
 
@@ -334,20 +344,20 @@ void RuntimeFeatureSettings::readSettingsFromFile() {
 		reader.exitTag(currentTag);
 	}
 	smDeserializer.closeWriter();
+
+	// What's on the card now matches what we hold, so there's nothing to write until something changes - unless an
+	// older firmware wrote it, in which case let the next save restamp it
+	if (readCleanly && stampedByThisFirmware) {
+		savedHash = hashSettings(startupSong.get());
+		savedHashKnown = true;
+	}
 }
 
-void RuntimeFeatureSettings::writeSettingsToFile() {
-	f_unlink(RUNTIME_FEATURE_SETTINGS_FILE); // May give error, but no real consequence from that.
-
-	Error error = StorageManager::createXMLFile(RUNTIME_FEATURE_SETTINGS_FILE, smSerializer, true);
-	if (error != Error::NONE) {
-		return;
-	}
-	Serializer& writer = GetSerializer();
+void RuntimeFeatureSettings::writeSettings(Serializer& writer, char const* startupSongPath) {
 	writer.writeOpeningTagBeginning(TAG_RUNTIME_FEATURE_SETTINGS);
 	writer.writeFirmwareVersion();
 	writer.writeEarliestCompatibleFirmwareVersion("4.1.3");
-	writer.writeAttribute("startupSong", currentSong->getSongFullPath().get());
+	writer.writeAttribute("startupSong", startupSongPath);
 	writer.writeOpeningTagEnd();
 
 	for (auto& setting : settings) {
@@ -369,8 +379,38 @@ void RuntimeFeatureSettings::writeSettingsToFile() {
 	}
 
 	writer.writeClosingTag(TAG_RUNTIME_FEATURE_SETTINGS);
+}
+
+uint32_t RuntimeFeatureSettings::hashSettings(char const* startupSongPath) {
+	smSerializer.reset();
+	smSerializer.beginHashing();
+	writeSettings(smSerializer, startupSongPath);
+	return smSerializer.endHashing();
+}
+
+void RuntimeFeatureSettings::writeSettingsToFile() {
+	String startupSongPath = currentSong->getSongFullPath();
+
+	// This gets called on every exit from the settings menu, even mid-performance - don't stall the card (and playback)
+	// rewriting a file that wouldn't change
+	uint32_t hash = hashSettings(startupSongPath.get());
+	if (savedHashKnown && hash == savedHash) {
+		return;
+	}
+
+	f_unlink(RUNTIME_FEATURE_SETTINGS_FILE); // May give error, but no real consequence from that.
+
+	Error error = StorageManager::createXMLFile(RUNTIME_FEATURE_SETTINGS_FILE, smSerializer, true);
+	if (error != Error::NONE) {
+		return;
+	}
+	Serializer& writer = GetSerializer();
+	writeSettings(writer, startupSongPath.get());
 	error = writer.closeFileAfterWriting();
 	if (error != Error::NONE) {
 		display->displayError(error); // Don't let the settings silently not be kept
+		return;
 	}
+	savedHash = hash;
+	savedHashKnown = true;
 }
