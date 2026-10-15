@@ -547,8 +547,9 @@ bool MidiEngine::flushQueuedMIDI(bool all, uint32_t now) {
 	if (anythingInOutputBuffer()) {
 		flushMIDI();
 	}
-	// Covers both USB and UART (including bytes UART is still sending)
-	return anythingInOutputBuffer();
+	// Only USB can need another go. Bytes UART is still sending don't: uartFlushIfNotSending() hands everything
+	// buffered to the DMA, or if it's busy flags a follow-on transfer which its completion interrupt starts
+	return anythingInUSBOutputBuffer;
 }
 
 bool MidiEngine::sendOldestQueuedMIDI(const InterruptsDisabled&) {
