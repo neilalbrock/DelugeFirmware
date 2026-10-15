@@ -121,14 +121,14 @@ TaskID TaskManager::chooseBestTask(Time deadline) {
 /// insert task into the first empty spot in the list
 TaskID TaskManager::insertTaskToList(Task task) {
 	int8_t index = 0;
-	while (list[index].handle && index < kMaxTasks) {
+	while (index < kMaxTasks && list[index].handle) {
 		index += 1;
 	}
-	if (index < kMaxTasks) {
-		list[index] = task;
-		numRegisteredTasks++;
+	if (index >= kMaxTasks) {
+		return -1;
 	}
-
+	list[index] = task;
+	numRegisteredTasks++;
 	return index;
 };
 
@@ -167,6 +167,9 @@ TaskID TaskManager::addConditionalTask(TaskHandle task, uint8_t priority, RunCon
 }
 
 void TaskManager::removeTask(TaskID id) {
+	if (id < 0 || id >= kMaxTasks || !list[id].handle) {
+		return;
+	}
 	list[id] = Task{};
 	numRegisteredTasks--;
 	createSortedList();
@@ -174,6 +177,9 @@ void TaskManager::removeTask(TaskID id) {
 }
 
 void TaskManager::boostTask(TaskID id) {
+	if (id < 0 || id >= kMaxTasks || !list[id].handle) {
+		return;
+	}
 	auto* task = &list[id];
 	if (!task->boosted) {
 		task->boosted = true;
