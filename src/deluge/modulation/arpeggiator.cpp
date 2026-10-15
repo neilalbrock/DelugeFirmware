@@ -919,6 +919,21 @@ int8_t ArpeggiatorBase::getRandomWeighted2BitsAmount(uint32_t value) {
 }
 
 void ArpeggiatorBase::calculateRandomizerAmounts(ArpeggiatorSettings* settings) {
+	// No settings means the arp is off (see arpIsOff()) - nothing to randomize, just play the note. No current caller
+	// gets here with none, but the arp-off paths call this regardless
+	if (settings == nullptr) [[unlikely]] {
+		isPlayNoteForCurrentStep = true;
+		isPlayBassForCurrentStep = false;
+		isPlayRandomStepForCurrentStep = false;
+		isPlayGlideForCurrentStep = false;
+		isPlayReverseForCurrentStep = false;
+		isPlayChordForCurrentStep = false;
+		isPlayRatchetForCurrentStep = false;
+		spreadVelocityForCurrentStep = 0;
+		spreadGateForCurrentStep = 0;
+		spreadOctaveForCurrentStep = 0;
+		return;
+	}
 	if (settings->randomizerLock) {
 		// Store generated randomized values in an array so we can repeat the sequence
 		if (resetLockedRandomizerValuesNextTime
