@@ -4487,6 +4487,11 @@ ActionResult InstrumentClipView::scrollVertical(int32_t scrollAmount, bool inCar
 		return ActionResult::DEALT_WITH;
 	}
 
+	// Dragging a row swaps it with just its neighbour, so scroll just one row to match, however fast the turn
+	if (draggingNoteRow && scrollAmount != 0) {
+		scrollAmount = (scrollAmount > 0) ? 1 : -1;
+	}
+
 	InstrumentClip* clip = getCurrentInstrumentClip();
 	Output* output = clip->output;
 	OutputType outputType = output->type;
