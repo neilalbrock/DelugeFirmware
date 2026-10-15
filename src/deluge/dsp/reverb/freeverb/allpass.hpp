@@ -23,6 +23,7 @@
 
 #pragma once
 #include "util/functions.h"
+#include <algorithm>
 #include <cstdint>
 #include <limits>
 #include <span>
@@ -52,6 +53,32 @@ public:
 		}
 
 		return output;
+	}
+
+	/// process() over a block, in place. As Comb::processBlock(), same values as calling process() per sample.
+	void processBlock(std::span<int32_t> samples) {
+		int32_t* __restrict__ buffer = buffer_.data();
+		int32_t* __restrict__ io = samples.data();
+		const size_t size = buffer_.size();
+		size_t idx = bufidx_;
+
+		size_t done = 0;
+		while (done < samples.size()) {
+			size_t run = std::min(samples.size() - done, size - idx);
+			for (size_t i = 0; i < run; i++) {
+				int32_t input = io[done + i];
+				int32_t bufout = buffer[idx + i];
+				io[done + i] = -input + bufout;
+				buffer[idx + i] = input + (bufout >> 1);
+			}
+			done += run;
+			idx += run;
+			if (idx >= size) {
+				idx = 0;
+			}
+		}
+
+		bufidx_ = idx;
 	}
 
 private:

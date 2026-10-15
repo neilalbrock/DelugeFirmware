@@ -24,6 +24,7 @@
 #pragma once
 
 #include "util/fixedpoint.h"
+#include <algorithm>
 #include <cstdint>
 #include <limits>
 #include <span>
@@ -62,6 +63,42 @@ public:
 		}
 
 		return output;
+	}
+
+	/// process() over a block, adding each output into accumulator. Keeping the state in locals for the whole block,
+	/// and splitting it where the delay line wraps rather than testing every sample, lets it all stay in registers.
+	/// Gives exactly the same values as calling process() per sample.
+	void processBlock(std::span<const int32_t> input, std::span<int32_t> accumulator) {
+		int32_t* __restrict__ buffer = buffer_.data();
+		const int32_t* __restrict__ in = input.data();
+		int32_t* __restrict__ acc = accumulator.data();
+		const size_t size = buffer_.size();
+		const int32_t damp1 = damp1_;
+		const int32_t damp2 = damp2_;
+		const int32_t feedback = feedback_;
+		int32_t filterstore = filterstore_;
+		size_t idx = bufidx_;
+
+		size_t done = 0;
+		while (done < input.size()) {
+			size_t run = std::min(input.size() - done, size - idx);
+			for (size_t i = 0; i < run; i++) {
+				int32_t output = buffer[idx + i];
+				filterstore = (multiply_32x32_rshift32_rounded(output, damp2) + //<
+				               multiply_32x32_rshift32_rounded(filterstore, damp1))
+				              << 1;
+				buffer[idx + i] = in[done + i] + (multiply_32x32_rshift32_rounded(filterstore, feedback) << 1);
+				acc[done + i] += output;
+			}
+			done += run;
+			idx += run;
+			if (idx >= size) {
+				idx = 0;
+			}
+		}
+
+		filterstore_ = filterstore;
+		bufidx_ = idx;
 	}
 
 private:

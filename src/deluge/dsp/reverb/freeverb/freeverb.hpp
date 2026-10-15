@@ -27,6 +27,7 @@
 #include "dsp/reverb/freeverb/allpass.hpp"
 #include "dsp/reverb/freeverb/comb.hpp"
 #include "dsp/reverb/freeverb/tuning.h"
+#include <algorithm>
 #include <cstdint>
 #include <span>
 
@@ -104,8 +105,37 @@ public:
 			reverb_sample -= reverb_send_post_lpf_;
 		}
 
-		for (size_t frame = 0; frame < input.size(); frame++) {
-			ProcessOne(input[frame], output[frame]);
+		// Run each filter over the whole block in turn rather than every filter per sample: each one's state then stays
+		// in registers. The combs all see the same input and are summed, and each allpass's output only depends on
+		// its own input sequence, so this gives exactly what ProcessOne() per frame does.
+		for (size_t start = 0; start < input.size(); start += kBlockSize) {
+			size_t num = std::min(kBlockSize, input.size() - start);
+			std::span<const int32_t> in = input.subspan(start, num);
+			std::span<int32_t> out_l{block_l_.data(), num};
+			std::span<int32_t> out_r{block_r_.data(), num};
+			std::fill(out_l.begin(), out_l.end(), 0);
+			std::fill(out_r.begin(), out_r.end(), 0);
+
+			for (int32_t i = 0; i < numcombs; i++) {
+				combL[i].processBlock(in, out_l);
+				combR[i].processBlock(in, out_r);
+			}
+			for (int32_t i = 0; i < numallpasses; i++) {
+				allpassL[i].processBlock(out_l);
+				allpassR[i].processBlock(out_r);
+			}
+
+			const int32_t pan_left = this->getPanLeft();
+			const int32_t pan_right = this->getPanRight();
+			for (size_t frame = 0; frame < num; frame++) {
+				int32_t l = out_l[frame];
+				int32_t r = out_r[frame];
+				// Each side mixes in some of the other's original, not the other's already-mixed result
+				int32_t mixed_l = (l + multiply_32x32_rshift32_rounded(r, wet2)) << 1;
+				int32_t mixed_r = (r + multiply_32x32_rshift32_rounded(l, wet2)) << 1;
+				output[start + frame].l += multiply_32x32_rshift32_rounded(mixed_l, pan_left);
+				output[start + frame].r += multiply_32x32_rshift32_rounded(mixed_r, pan_right);
+			}
 		}
 	}
 
@@ -124,6 +154,11 @@ private:
 	// The following are all declared inline
 	// to remove the need for dynamic allocation
 	// with its subsequent error-checking messiness
+
+	// Comb sums, then allpass outputs, for the block being processed
+	static constexpr size_t kBlockSize = 128;
+	std::array<int32_t, kBlockSize> block_l_;
+	std::array<int32_t, kBlockSize> block_r_;
 
 	// Comb filters
 	std::array<freeverb::Comb, numcombs> combL;
