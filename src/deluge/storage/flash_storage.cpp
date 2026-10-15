@@ -602,10 +602,14 @@ void readSettings() {
 		defaultVelocity = 64;
 	}
 
-	gui::menu_item::activeColourMenu.value = static_cast<gui::menu_item::Colour::Option>(buffer[74]);
-	gui::menu_item::stoppedColourMenu.value = static_cast<gui::menu_item::Colour::Option>(buffer[75]);
-	gui::menu_item::mutedColourMenu.value = static_cast<gui::menu_item::Colour::Option>(buffer[76]);
-	gui::menu_item::soloColourMenu.value = static_cast<gui::menu_item::Colour::Option>(buffer[77]);
+	auto readColour = [](uint8_t stored, gui::menu_item::Colour::Option fallback) {
+		return (stored < gui::menu_item::kNumPadColours) ? static_cast<gui::menu_item::Colour::Option>(stored)
+		                                                 : fallback;
+	};
+	gui::menu_item::activeColourMenu.value = readColour(buffer[74], gui::menu_item::Colour::GREEN);
+	gui::menu_item::stoppedColourMenu.value = readColour(buffer[75], gui::menu_item::Colour::RED);
+	gui::menu_item::mutedColourMenu.value = readColour(buffer[76], gui::menu_item::Colour::YELLOW);
+	gui::menu_item::soloColourMenu.value = readColour(buffer[77], gui::menu_item::Colour::BLUE);
 
 	defaultMagnitude = buffer[78];
 
@@ -801,14 +805,14 @@ void readSettings() {
 		accessibilityShortcuts = buffer[174];
 	}
 
-	if (buffer[175] < 0 && buffer[175] > util::to_underlying(MenuHighlighting::NO_INVERSION)) {
+	if (buffer[175] > util::to_underlying(MenuHighlighting::NO_INVERSION)) {
 		accessibilityMenuHighlighting = MenuHighlighting::PARTIAL_INVERSION;
 	}
 	else {
 		accessibilityMenuHighlighting = static_cast<MenuHighlighting>(buffer[175]);
 	}
 
-	if (buffer[176] < 0 && buffer[176] > util::to_underlying(OutputType::AUDIO)) {
+	if (buffer[176] > util::to_underlying(OutputType::AUDIO)) {
 		defaultNewClipType = OutputType::SYNTH;
 	}
 	else {
