@@ -331,13 +331,15 @@ ModFXType Sound::getModFXType() {
 // Returns false if not enough ram
 bool Sound::setModFXType(ModFXType newType) {
 
+	bool gotMemory = true;
 	if (util::one_of(newType, {ModFXType::FLANGER, ModFXType::CHORUS, ModFXType::CHORUS_STEREO, ModFXType::WARBLE,
 	                           ModFXType::DIMENSION})) {
-		modfx.setupBuffer();
+		gotMemory = modfx.setupBuffer();
 		disableGrain();
 	}
 	else if (newType == ModFXType::GRAIN) {
 		enableGrain();
+		gotMemory = (grainFX != nullptr);
 		modfx.disableBuffer();
 	}
 	else {
@@ -345,8 +347,9 @@ bool Sound::setModFXType(ModFXType newType) {
 		disableGrain();
 	}
 
-	modFXType_ = newType;
-	return true;
+	// Without its memory the effect can't run, and the old one has already been switched off
+	modFXType_ = gotMemory ? newType : ModFXType::NONE;
+	return gotMemory;
 }
 
 void Sound::patchedParamPresetValueChanged(uint8_t p, ModelStackWithSoundFlags* modelStack, int32_t oldValue,
@@ -2204,7 +2207,7 @@ doCutModFXTail:
 						waitSamplesModfx = 20 * 44;
 						break;
 					case ModFXType::GRAIN:
-						waitSamplesModfx = grainFX->getSamplesToShutdown();
+						waitSamplesModfx = grainFX ? grainFX->getSamplesToShutdown() : 0;
 						break;
 					default:
 						waitSamplesModfx = (90 * 441);

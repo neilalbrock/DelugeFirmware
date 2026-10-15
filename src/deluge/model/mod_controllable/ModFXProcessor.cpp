@@ -31,6 +31,11 @@ void ModFXProcessor::processModFX(std::span<StereoSample> buffer, const ModFXTyp
 	// if nothing rendered into the clip then we can just return
 	if (anySoundComingIn == false)
 		return;
+	// Every type but the phaser (and grain, which isn't done here) needs the delay buffer, which may have failed to
+	// allocate
+	if (modFXBuffer == nullptr && modFXType != ModFXType::PHASER) [[unlikely]] {
+		return;
+	}
 	if (modFXType != ModFXType::NONE) {
 
 		LFOType modFXLFOWaveType{};
@@ -278,13 +283,14 @@ void ModFXProcessor::resetMemory() {
 	}
 }
 
-void ModFXProcessor::setupBuffer() {
+bool ModFXProcessor::setupBuffer() {
 	if (!modFXBuffer) {
 		modFXBuffer = (StereoSample*)delugeAlloc(kModFXBufferSize * sizeof(StereoSample));
 		if (modFXBuffer) {
 			memset(modFXBuffer, 0, kModFXBufferSize * sizeof(StereoSample));
 		}
 	}
+	return modFXBuffer != nullptr;
 }
 void ModFXProcessor::disableBuffer() {
 	if (modFXBuffer) {
