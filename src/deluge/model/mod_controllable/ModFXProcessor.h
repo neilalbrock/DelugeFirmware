@@ -23,29 +23,44 @@
 #include <cstdint>
 #include <span>
 
+/// The LFO shape each mod FX type modulates its delay (or the phaser its allpasses) with
+constexpr LFOType getModFXLFOType(ModFXType type) {
+	switch (type) {
+	case ModFXType::FLANGER:
+	case ModFXType::DIMENSION:
+		return LFOType::TRIANGLE;
+	case ModFXType::WARBLE:
+		return LFOType::WARBLER;
+	default: // chorus, stereo chorus, phaser
+		return LFOType::SINE;
+	}
+}
+
 class ModFXProcessor {
 
 	void setupChorus(const ModFXType& modFXType, int32_t modFXDepth, int32_t* postFXVolume,
-	                 UnpatchedParamSet* unpatchedParams, LFOType& modFXLFOWaveType, int32_t& modFXDelayOffset,
-	                 int32_t& thisModFXDelayDepth) const;
+	                 UnpatchedParamSet* unpatchedParams, int32_t& modFXDelayOffset, int32_t& thisModFXDelayDepth) const;
 
 	/// flanger, phaser, warble - generally any modulated delay tap based effect with feedback
 	void setupModFXWFeedback(const ModFXType& modFXType, int32_t modFXDepth, int32_t* postFXVolume,
-	                         UnpatchedParamSet* unpatchedParams, LFOType& modFXLFOWaveType, int32_t& modFXDelayOffset,
+	                         UnpatchedParamSet* unpatchedParams, int32_t& modFXDelayOffset,
 	                         int32_t& thisModFXDelayDepth, int32_t& feedback) const;
 	// not grain!
 	template <ModFXType modFXType>
 	void processModFXBuffer(std::span<StereoSample> buffer, int32_t modFXRate, int32_t modFXDepth,
-	                        LFOType& modFXLFOWaveType, int32_t modFXDelayOffset, int32_t thisModFXDelayDepth,
-	                        int32_t feedback, bool stereo);
+	                        int32_t modFXDelayOffset, int32_t thisModFXDelayDepth, int32_t feedback, bool stereo);
 
+	// These run per sample, so must inline into processModFXBuffer - the main build has -fno-inline-functions
 	template <ModFXType modFXType>
-	std::pair<int32_t, int32_t> processModLFOs(int32_t modFXRate, LFOType modFXLFOWaveType);
+	[[gnu::always_inline]] inline std::pair<int32_t, int32_t> processModLFOs(int32_t modFXRate,
+	                                                                         LFOType modFXLFOWaveType);
 
 	template <ModFXType modFXType, bool stereo>
-	StereoSample processOneModFXSample(StereoSample sample, int32_t modFXDelayOffset, int32_t thisModFXDelayDepth,
-	                                   int32_t feedback, int32_t lfoOutput, int32_t lfo2Output);
-	StereoSample processOnePhaserSample(StereoSample sample, int32_t modFXDepth, int32_t feedback, int32_t lfoOutput);
+	[[gnu::always_inline]] inline StereoSample processOneModFXSample(StereoSample sample, int32_t modFXDelayOffset,
+	                                                                 int32_t thisModFXDelayDepth, int32_t feedback,
+	                                                                 int32_t lfoOutput, int32_t lfo2Output);
+	[[gnu::always_inline]] inline StereoSample processOnePhaserSample(StereoSample sample, int32_t modFXDepth,
+	                                                                  int32_t feedback, int32_t lfoOutput);
 
 public:
 	ModFXProcessor() {

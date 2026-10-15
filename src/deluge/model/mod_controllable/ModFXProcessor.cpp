@@ -38,20 +38,18 @@ void ModFXProcessor::processModFX(std::span<StereoSample> buffer, const ModFXTyp
 	}
 	if (modFXType != ModFXType::NONE) {
 
-		LFOType modFXLFOWaveType{};
 		int32_t modFXDelayOffset{};
 		int32_t thisModFXDelayDepth{};
 		int32_t feedback{};
 
 		if (modFXType == ModFXType::FLANGER || modFXType == ModFXType::PHASER || modFXType == ModFXType::WARBLE) {
 
-			setupModFXWFeedback(modFXType, modFXDepth, postFXVolume, unpatchedParams, modFXLFOWaveType,
-			                    modFXDelayOffset, thisModFXDelayDepth, feedback);
+			setupModFXWFeedback(modFXType, modFXDepth, postFXVolume, unpatchedParams, modFXDelayOffset,
+			                    thisModFXDelayDepth, feedback);
 		}
 		else if (modFXType == ModFXType::CHORUS || modFXType == ModFXType::CHORUS_STEREO
 		         || modFXType == ModFXType::DIMENSION) {
-			setupChorus(modFXType, modFXDepth, postFXVolume, unpatchedParams, modFXLFOWaveType, modFXDelayOffset,
-			            thisModFXDelayDepth);
+			setupChorus(modFXType, modFXDepth, postFXVolume, unpatchedParams, modFXDelayOffset, thisModFXDelayDepth);
 		}
 
 		switch (modFXType) {
@@ -59,55 +57,47 @@ void ModFXProcessor::processModFX(std::span<StereoSample> buffer, const ModFXTyp
 		case ModFXType::NONE:
 			break;
 		case ModFXType::FLANGER:
-			processModFXBuffer<ModFXType::FLANGER>(buffer, modFXRate, modFXDepth, modFXLFOWaveType, modFXDelayOffset,
-			                                       thisModFXDelayDepth, feedback, AudioEngine::renderInStereo);
+			processModFXBuffer<ModFXType::FLANGER>(buffer, modFXRate, modFXDepth, modFXDelayOffset, thisModFXDelayDepth,
+			                                       feedback, AudioEngine::renderInStereo);
 			break;
 		case ModFXType::CHORUS:
-			processModFXBuffer<ModFXType::CHORUS>(buffer, modFXRate, modFXDepth, modFXLFOWaveType, modFXDelayOffset,
-			                                      thisModFXDelayDepth, feedback, AudioEngine::renderInStereo);
+			processModFXBuffer<ModFXType::CHORUS>(buffer, modFXRate, modFXDepth, modFXDelayOffset, thisModFXDelayDepth,
+			                                      feedback, AudioEngine::renderInStereo);
 			break;
 		case ModFXType::PHASER:
-			processModFXBuffer<ModFXType::PHASER>(buffer, modFXRate, modFXDepth, modFXLFOWaveType, modFXDelayOffset,
-			                                      thisModFXDelayDepth, feedback, AudioEngine::renderInStereo);
+			processModFXBuffer<ModFXType::PHASER>(buffer, modFXRate, modFXDepth, modFXDelayOffset, thisModFXDelayDepth,
+			                                      feedback, AudioEngine::renderInStereo);
 			break;
 		case ModFXType::CHORUS_STEREO:
-			processModFXBuffer<ModFXType::CHORUS_STEREO>(buffer, modFXRate, modFXDepth, modFXLFOWaveType,
-			                                             modFXDelayOffset, thisModFXDelayDepth, feedback,
-			                                             AudioEngine::renderInStereo);
+			processModFXBuffer<ModFXType::CHORUS_STEREO>(buffer, modFXRate, modFXDepth, modFXDelayOffset,
+			                                             thisModFXDelayDepth, feedback, AudioEngine::renderInStereo);
 			break;
 		case ModFXType::WARBLE:
-			processModFXBuffer<ModFXType::WARBLE>(buffer, modFXRate, modFXDepth, modFXLFOWaveType, modFXDelayOffset,
-			                                      thisModFXDelayDepth, feedback, AudioEngine::renderInStereo);
+			processModFXBuffer<ModFXType::WARBLE>(buffer, modFXRate, modFXDepth, modFXDelayOffset, thisModFXDelayDepth,
+			                                      feedback, AudioEngine::renderInStereo);
 			break;
 		case ModFXType::GRAIN:
 			break;
 		case ModFXType::DIMENSION:
-			processModFXBuffer<ModFXType::DIMENSION>(buffer, modFXRate, modFXDepth, modFXLFOWaveType, modFXDelayOffset,
+			processModFXBuffer<ModFXType::DIMENSION>(buffer, modFXRate, modFXDepth, modFXDelayOffset,
 			                                         thisModFXDelayDepth, feedback, AudioEngine::renderInStereo);
 			break;
 		}
 	}
 }
 void ModFXProcessor::setupChorus(const ModFXType& modFXType, int32_t modFXDepth, int32_t* postFXVolume,
-                                 UnpatchedParamSet* unpatchedParams, LFOType& modFXLFOWaveType,
-                                 int32_t& modFXDelayOffset, int32_t& thisModFXDelayDepth) const {
+                                 UnpatchedParamSet* unpatchedParams, int32_t& modFXDelayOffset,
+                                 int32_t& thisModFXDelayDepth) const {
 	modFXDelayOffset = multiply_32x32_rshift32(
 	    kModFXMaxDelay,
 	    (unpatchedParams->getValue(deluge::modulation::params::UNPATCHED_MOD_FX_OFFSET) >> 1) + 1073741824);
 	thisModFXDelayDepth = multiply_32x32_rshift32(modFXDelayOffset, modFXDepth) << 2;
-	if (modFXType == ModFXType::DIMENSION) {
-		modFXLFOWaveType = LFOType::TRIANGLE;
-	}
-	else {
-		modFXLFOWaveType = LFOType::SINE;
-	}
 
 	*postFXVolume = multiply_32x32_rshift32(*postFXVolume, 1518500250) << 1; // Divide by sqrt(2)
 }
 void ModFXProcessor::setupModFXWFeedback(const ModFXType& modFXType, int32_t modFXDepth, int32_t* postFXVolume,
-                                         UnpatchedParamSet* unpatchedParams, LFOType& modFXLFOWaveType,
-                                         int32_t& modFXDelayOffset, int32_t& thisModFXDelayDepth,
-                                         int32_t& feedback) const {
+                                         UnpatchedParamSet* unpatchedParams, int32_t& modFXDelayOffset,
+                                         int32_t& thisModFXDelayDepth, int32_t& feedback) const {
 	int32_t a = unpatchedParams->getValue(deluge::modulation::params::UNPATCHED_MOD_FX_FEEDBACK) >> 1;
 	int32_t b = 2147483647 - ((a + 1073741824) >> 2) * 3;
 	int32_t c = multiply_32x32_rshift32(b, b);
@@ -128,7 +118,6 @@ void ModFXProcessor::setupModFXWFeedback(const ModFXType& modFXType, int32_t mod
 		*postFXVolume <<= 1;
 		modFXDelayOffset = kFlangerOffset;
 		thisModFXDelayDepth = kFlangerAmplitude;
-		modFXLFOWaveType = LFOType::TRIANGLE;
 	}
 	else if (modFXType == ModFXType::WARBLE) {
 		*postFXVolume <<= 1;
@@ -136,17 +125,15 @@ void ModFXProcessor::setupModFXWFeedback(const ModFXType& modFXType, int32_t mod
 		modFXDelayOffset += multiply_32x32_rshift32(
 		    kFlangerOffset, (unpatchedParams->getValue(deluge::modulation::params::UNPATCHED_MOD_FX_OFFSET)));
 		thisModFXDelayDepth = multiply_32x32_rshift32(modFXDelayOffset, modFXDepth) << 1;
-		modFXLFOWaveType = LFOType::WARBLER;
-	}
-
-	else { // Phaser
-		modFXLFOWaveType = LFOType::SINE;
 	}
 }
 template <ModFXType modFXType>
 void ModFXProcessor::processModFXBuffer(std::span<StereoSample> buffer, int32_t modFXRate, int32_t modFXDepth,
-                                        LFOType& modFXLFOWaveType, int32_t modFXDelayOffset,
-                                        int32_t thisModFXDelayDepth, int32_t feedback, bool stereo) {
+                                        int32_t modFXDelayOffset, int32_t thisModFXDelayDepth, int32_t feedback,
+                                        bool stereo) {
+	// Each type always uses the same LFO shape, so this lets the per-sample LFO render skip its switch on the shape
+	constexpr LFOType modFXLFOWaveType = getModFXLFOType(modFXType);
+
 	if constexpr (modFXType == ModFXType::PHASER) {
 		for (StereoSample& sample : buffer) {
 			int32_t lfo = modFXLFO.render(1, modFXLFOWaveType, modFXRate);
@@ -155,12 +142,19 @@ void ModFXProcessor::processModFXBuffer(std::span<StereoSample> buffer, int32_t 
 		return;
 	}
 
-	for (StereoSample& sample : buffer) {
-		auto [lfo1, lfo2] = processModLFOs<modFXType>(modFXRate, modFXLFOWaveType);
-		sample = stereo ? processOneModFXSample<modFXType, true>(sample, modFXDelayOffset, thisModFXDelayDepth,
-		                                                         feedback, lfo1, lfo2)
-		                : processOneModFXSample<modFXType, false>(sample, modFXDelayOffset, thisModFXDelayDepth,
-		                                                          feedback, lfo1, -lfo1);
+	if (stereo) {
+		for (StereoSample& sample : buffer) {
+			auto [lfo1, lfo2] = processModLFOs<modFXType>(modFXRate, modFXLFOWaveType);
+			sample = processOneModFXSample<modFXType, true>(sample, modFXDelayOffset, thisModFXDelayDepth, feedback,
+			                                                lfo1, lfo2);
+		}
+	}
+	else {
+		for (StereoSample& sample : buffer) {
+			auto [lfo1, lfo2] = processModLFOs<modFXType>(modFXRate, modFXLFOWaveType);
+			sample = processOneModFXSample<modFXType, false>(sample, modFXDelayOffset, thisModFXDelayDepth, feedback,
+			                                                 lfo1, -lfo1);
+		}
 	}
 }
 
