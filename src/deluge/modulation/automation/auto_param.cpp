@@ -1191,13 +1191,20 @@ int32_t AutoParam::homogenizeRegion(ModelStackWithAutoParam const* modelStack, i
                                     int32_t startValue, bool interpolateLeftNode, bool interpolateRightNode,
                                     int32_t effectiveLength, bool reversed, int32_t posAtWhichClipWillCut) {
 
-#if ALPHA_OR_BETA_VERSION
 	// Chasing "E433" / "GGGG" error (probably now largely solved - except got E435, see below).
+	// Proceeding with any of these would produce out-of-order nodes / a negative delete count below, so bail with the
+	// usual error return (callers handle -1) in all builds. Only freeze in alpha/beta.
 	if (length <= 0) {
-		FREEZE_WITH_ERROR("E427");
+		if constexpr (ALPHA_OR_BETA_VERSION) {
+			FREEZE_WITH_ERROR("E427");
+		}
+		return -1;
 	}
 	if (startPos < 0) {
-		FREEZE_WITH_ERROR("E437");
+		if constexpr (ALPHA_OR_BETA_VERSION) {
+			FREEZE_WITH_ERROR("E437");
+		}
+		return -1;
 	}
 
 	// #if ENABLE_SEQUENTIALITY_TESTS
@@ -1205,10 +1212,12 @@ int32_t AutoParam::homogenizeRegion(ModelStackWithAutoParam const* modelStack, i
 	// #endif
 
 	if (nodes.getNumElements() && nodes.getFirst()->pos < 0) {
-		FREEZE_WITH_ERROR("E436");
+		if constexpr (ALPHA_OR_BETA_VERSION) {
+			FREEZE_WITH_ERROR("E436");
+		}
+		return -1;
 	}
 	// Should probably also check that stuff doesn't exist too far right - but that's a bit more complicated.
-#endif
 
 	int32_t edgePositions[2];
 	bool anyWrap;
@@ -1221,11 +1230,12 @@ int32_t AutoParam::homogenizeRegion(ModelStackWithAutoParam const* modelStack, i
 		int32_t maxLength = posAtWhichClipWillCut - edgePositions[REGION_EDGE_LEFT];
 		if (length >= maxLength) {
 			length = maxLength;
-#if ALPHA_OR_BETA_VERSION
 			if (length <= 0) {
-				FREEZE_WITH_ERROR("E428"); // Chasing Leo's GGGG error (probably now solved).
+				if constexpr (ALPHA_OR_BETA_VERSION) {
+					FREEZE_WITH_ERROR("E428"); // Chasing Leo's GGGG error (probably now solved).
+				}
+				return -1;
 			}
-#endif
 			interpolateRightNode = false;
 			edgePositions[REGION_EDGE_RIGHT] = posAtWhichClipWillCut;
 			anyWrap = (edgePositions[REGION_EDGE_RIGHT] >= effectiveLength);
@@ -1256,11 +1266,12 @@ int32_t AutoParam::homogenizeRegion(ModelStackWithAutoParam const* modelStack, i
 
 	// Or, playing reversed...
 	else {
-		if constexpr (ALPHA_OR_BETA_VERSION) {
-			if (startPos < posAtWhichClipWillCut) {
-				// Sean: potentially solved by PR https://github.com/SynthstromAudible/DelugeFirmware/pull/4445
+		if (startPos < posAtWhichClipWillCut) {
+			// Sean: potentially solved by PR https://github.com/SynthstromAudible/DelugeFirmware/pull/4445
+			if constexpr (ALPHA_OR_BETA_VERSION) {
 				FREEZE_WITH_ERROR("E445");
 			}
+			return -1;
 		}
 		edgePositions[REGION_EDGE_RIGHT] = startPos;
 		edgePositions[REGION_EDGE_LEFT] = edgePositions[REGION_EDGE_RIGHT] - length;
@@ -1269,10 +1280,11 @@ int32_t AutoParam::homogenizeRegion(ModelStackWithAutoParam const* modelStack, i
 		if (edgePositions[REGION_EDGE_LEFT] < posAtWhichClipWillCut) {
 			edgePositions[REGION_EDGE_LEFT] = posAtWhichClipWillCut;
 			length = edgePositions[REGION_EDGE_RIGHT] - edgePositions[REGION_EDGE_LEFT];
-			if constexpr (ALPHA_OR_BETA_VERSION) {
-				if (edgePositions[REGION_EDGE_LEFT] >= edgePositions[REGION_EDGE_RIGHT]) {
+			if (edgePositions[REGION_EDGE_LEFT] >= edgePositions[REGION_EDGE_RIGHT]) {
+				if constexpr (ALPHA_OR_BETA_VERSION) {
 					FREEZE_WITH_ERROR("HHHH");
 				}
+				return -1;
 			}
 
 			interpolateLeftNode = false; // Maybe not really perfect
@@ -2219,11 +2231,13 @@ void AutoParam::paste(int32_t startPos, int32_t endPos, float scaleFactor, Model
 	int32_t wrappedEndPos = endPos % effectiveLength;
 	bool overwrittingEntireRegion = startPos == 0 && endPos >= effectiveLength;
 
-#if defined(ALPHA_OR_BETA_VERSION)
+	// Nothing to paste - and nodes[0] is dereferenced below.
 	if (copiedParamAutomation->nodes == nullptr || copiedParamAutomation->numNodes == 0) {
-		FREEZE_WITH_ERROR("E453");
+		if constexpr (ALPHA_OR_BETA_VERSION) {
+			FREEZE_WITH_ERROR("E453");
+		}
+		return;
 	}
-#endif
 
 	// Save the current value at the start and end of the region w'ere pasting in to, before we start messing with it.
 	int32_t startValue = getValueAtPos(startPos, modelStack);
@@ -2811,16 +2825,27 @@ void AutoParam::nudgeNonInterpolatingNodesAtPos(int32_t pos, int32_t offset, int
 
 			int32_t newNodePos = pos + offset;
 			int32_t nextNodeI;
-			bool wrappingRight = false;
+
+			// A single node is legal. With nothing else to collide with or order against, just move it (wrapping if
+			// needed) - the wrap logic below assumes at least one other node and would index out of bounds.
+			if (nodes.getNumElements() == 1) {
+				if (newNodePos < 0) {
+					newNodePos += lengthBeforeLoop;
+				}
+				else if (newNodePos >= lengthBeforeLoop) {
+					newNodePos -= lengthBeforeLoop;
+				}
+				node->pos = newNodePos;
+			}
 
 			// If that's caused wrapping left...
-			if (newNodePos < 0) {
+			else if (newNodePos < 0) {
 				newNodePos += lengthBeforeLoop;
 				nextNodeI = nodes.getNumElements() - 2; // Subtract 2 instead of the normal 1 cos we're about to delete
 				                                        // one element before doing anything with this index number
 
 doWrap:
-				// There should never be just one node
+				// The single-node case is handled above, so there must be at least 2 nodes here
 				if (ALPHA_OR_BETA_VERSION && nodes.getNumElements() == 1) {
 					FREEZE_WITH_ERROR("E335");
 				}
@@ -2847,15 +2872,16 @@ doWrap:
 					}
 				}
 
-				// Otherwise, create a new node - at the start if we wrapped round to pos 0, or the end if back to the
-				// end
+				// Otherwise, create a new node - at its sorted position. Wrapping left lands it at the end, but
+				// wrapping right lands it at the start, so it can't just go on the end.
 				else {
-					nextNodeI = wrappingRight ? 0 : nodes.getNumElements();
+					nextNodeI = nodes.search(newNodePos, GREATER_OR_EQUAL);
 					{
 						Error error = nodes.insertAtIndex(
 						    nextNodeI); // This shouldn't be able to fail, cos we just deleted a node
-						if (ALPHA_OR_BETA_VERSION && error != Error::NONE) {
+						if (error != Error::NONE) {
 							FREEZE_WITH_ERROR("E333");
+							goto finishedNudging; // Don't write to the element that wasn't created
 						}
 					}
 
@@ -2872,7 +2898,6 @@ setNodeValue:
 			else if (newNodePos >= lengthBeforeLoop) {
 				newNodePos -= lengthBeforeLoop;
 				nextNodeI = 0;
-				wrappingRight = true;
 				goto doWrap;
 			}
 
@@ -2897,6 +2922,7 @@ setNodeValue:
 		}
 	}
 
+finishedNudging:
 	if (!nodes.getNumElements()) {
 		resetInterpolationIncrement(); // In case we were interpolating.
 	}
