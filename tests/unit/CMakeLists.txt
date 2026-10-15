@@ -97,6 +97,7 @@ add_executable(UnitTests
         waveform_peak_math_tests.cpp
         midi_queue_tests.cpp
         note_probability_tests.cpp
+        interpolator_tests.cpp
 )
 add_test(NAME UnitTests
         COMMAND UnitTests)

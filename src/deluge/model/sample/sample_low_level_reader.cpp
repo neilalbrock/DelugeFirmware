@@ -988,7 +988,7 @@ void SampleLowLevelReader::readSamplesResampled(int32_t** __restrict__ oscBuffer
 
 					int16_t sourceL = *(int16_t*)currentPlayPosNow;
 
-					interpolator_.jumpForward(numSamplesToJumpForward);
+					interpolator_.jumpForward(numSamplesToJumpForward, numChannels);
 					numSamplesToJumpForward--;
 
 					if (numChannels == 2) {
