@@ -584,16 +584,21 @@ etl::vector<WindowOutput, kMaxWindowOutputs> windowOutputs;
 // Sorted by due time. Shared with the ISR, so only access it with interrupts disabled - functions using it take an
 // InterruptsDisabled to enforce that
 etl::vector<ScheduledOutput, kMaxScheduledOutputs> scheduledOutputs;
-// A flush from the ISR left something in the MIDI output buffer - USB was busy/locked, or UART was still sending - so
-// the timer's been re-armed to flush again. Same access rules as scheduledOutputs
+// A flush from the ISR left something in the USB MIDI output buffer - it was busy or locked - so the timer's been
+// re-armed to flush again. Same access rules as scheduledOutputs
 bool midiFlushIncomplete = false;
+// How many times in a row that's happened, which spaces the retries out - a host that never collects what we send
+// would otherwise have this firing every 0.1ms until the cable's pulled
+uint8_t midiFlushRetries = 0;
 
 // Anything due within a sample of now gets sent rather than re-arming the timer for it
 constexpr int32_t kOutputTimeTolerance = kSystemTicksPerSampleQ8 >> 8;
 // The MIDI/gate output timer runs with a prescaler of 64 (see main.c)
 constexpr int32_t kOutputTimerPrescaleMagnitude = 6;
-// If a flush couldn't send everything, try again after 0.1ms
+// If a flush couldn't send everything, try again after 0.1ms, doubling each time it still can't up to 3.2ms - about
+// one audio render, which flushes anyway
 constexpr int32_t kMIDIRetryTicks = DELUGE_CLOCKS_PER / 10000;
+constexpr uint8_t kMaxMIDIRetryBackoffMagnitude = 5;
 
 // System timer time at the start of the current render window, and how many samples the playhead was then from lapping
 // the start of the window - together these give the time each sample in the window will be played
@@ -651,6 +656,8 @@ void sendDueOutputs(uint32_t now, const InterruptsDisabled& guard) {
 
 	// The output buffers only hold MIDI which is already due so a retry can't send anything early anymore
 	midiFlushIncomplete = midiEngine.flushDueMIDI(now + kOutputTimeTolerance, guard);
+	midiFlushRetries =
+	    midiFlushIncomplete ? std::min<uint8_t>(midiFlushRetries + 1, kMaxMIDIRetryBackoffMagnitude + 1) : 0;
 }
 
 /// Arm the timer for the earliest scheduled output or MIDI retry, or stop it if there's nothing left
@@ -661,7 +668,7 @@ void armMidiGateOutputTimer(uint32_t now, const InterruptsDisabled&) {
 	if (scheduledOutputs.empty() && !midiQueued && !midiFlushIncomplete) {
 		return;
 	}
-	int32_t ticksTilDue = midiFlushIncomplete ? kMIDIRetryTicks : INT32_MAX;
+	int32_t ticksTilDue = midiFlushIncomplete ? (kMIDIRetryTicks << (midiFlushRetries - 1)) : INT32_MAX;
 	if (!scheduledOutputs.empty()) {
 		ticksTilDue = std::min(ticksTilDue, (int32_t)(scheduledOutputs[0].due - now));
 	}
@@ -1013,7 +1020,19 @@ startAgain:
 
 void feedReverbBackdoorForGrain(int index, q31_t value) {
 	reverbMemory[index] += value;
+	if (value != 0) {
+		timeThereWasLastSomeReverb = audioSampleTimer;
+	}
 }
+
+// Once nothing has been sent to the reverb for a while, we keep running it only while its own tail is still audible.
+// 2^13 is the same level the old whole-mix check used (approx RMS e^9), ~65dB below where the render buffer clips
+constexpr int32_t kReverbTailAudibleLevel = 1 << 13;
+// The tail must stay below that for this long before we stop, so sidechain ducking can't cut it off
+constexpr uint32_t kReverbTailQuietTime = kSampleRate;
+bool reverbTailAudible = false;
+uint32_t timeReverbTailWasLastAudible = 0;
+std::array<StereoSample, SSI_TX_BUFFER_NUM_SAMPLES> reverbTailMemory;
 void renderReverb(size_t numSamples) {
 	std::span renderingBuffer{renderingMemory.data(), numSamples};
 	std::span reverbBuffer{reverbMemory.data(), numSamples};
@@ -1036,12 +1055,15 @@ void renderReverb(size_t numSamples) {
 	int32_t reverbAmplitudeL;
 	int32_t reverbAmplitudeR;
 
-	// Stop reverb after 12 seconds of inactivity
-	bool reverbOn = ((uint32_t)(audioSampleTimer - timeThereWasLastSomeReverb) < kSampleRate * 12);
-	// around the mutable noise floor, ~70dB from peak
-	reverbOn |= (std::max(approxRMSLevel.l, approxRMSLevel.r) > 9);
+	// Run the reverb for 12 seconds after anything was last sent to it, and after that only while its tail can still be
+	// heard. (Gating on the level of the whole mix kept it running in every song that was playing anything.)
+	bool sentRecently = ((uint32_t)(audioSampleTimer - timeThereWasLastSomeReverb) < kSampleRate * 12);
+	if (sentRecently) {
+		reverbTailAudible = true;
+		timeReverbTailWasLastAudible = audioSampleTimer;
+	}
 
-	if (reverbOn) {
+	if (sentRecently || reverbTailAudible) {
 		// Patch that to reverb volume
 		int32_t positivePatchedValue =
 		    multiply_32x32_rshift32(sidechainOutput, reverbSidechainVolumeInEffect) + 0x20000000;
@@ -1060,7 +1082,29 @@ void renderReverb(size_t numSamples) {
 
 		// Mix reverb into main render
 		reverb.setPanLevels(reverbAmplitudeL, reverbAmplitudeR);
-		reverb.process(reverbBuffer, renderingBuffer);
+		if (sentRecently) {
+			reverb.process(reverbBuffer, renderingBuffer);
+		}
+		else {
+			// Render just the tail so we can measure it. The reverbs only ever add to their output, so mixing it in
+			// afterwards gives the same result
+			std::span tailBuffer{reverbTailMemory.data(), numSamples};
+			std::ranges::fill(tailBuffer, StereoSample{0, 0});
+			reverb.process(reverbBuffer, tailBuffer);
+
+			int32_t peak = 0;
+			for (size_t i = 0; i < numSamples; i++) {
+				renderingBuffer[i].l += tailBuffer[i].l;
+				renderingBuffer[i].r += tailBuffer[i].r;
+				peak = std::max({peak, std::abs(tailBuffer[i].l), std::abs(tailBuffer[i].r)});
+			}
+			if (peak > kReverbTailAudibleLevel) {
+				timeReverbTailWasLastAudible = audioSampleTimer;
+			}
+			else if ((uint32_t)(audioSampleTimer - timeReverbTailWasLastAudible) > kReverbTailQuietTime) {
+				reverbTailAudible = false;
+			}
+		}
 		logAction("Reverb complete");
 	}
 }

@@ -16,7 +16,7 @@
  */
 
 #include "processing/live/live_pitch_shifter_play_head.h"
-#include "dsp/interpolate/interpolate.h"
+#include "dsp/interpolate/interpolate_inline.hpp"
 #include "processing/live/live_input_buffer.h"
 #include "processing/live/live_pitch_shifter.h"
 #include "util/fixedpoint.h"
@@ -75,7 +75,7 @@ void LivePitchShifterPlayHead::render(int32_t* __restrict__ outputBuffer, int32_
 					numSamplesToJumpForward = kInterpolationMaxNumSamples;
 				}
 
-				interpolator_.jumpForward(numSamplesToJumpForward);
+				interpolator_.jumpForward(numSamplesToJumpForward, numChannels);
 
 				while (numSamplesToJumpForward--) {
 					interpolator_.buffer_l[numSamplesToJumpForward] = rawBuffer[rawBufferReadPos * numChannels] >> 16;

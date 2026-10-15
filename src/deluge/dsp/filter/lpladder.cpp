@@ -171,12 +171,12 @@ q31_t LpLadderFilter::setConfig(q31_t lpfFrequency, q31_t lpfResonance, FilterMo
 	return filterGain;
 }
 
-[[gnu::hot]] void LpLadderFilter::doFilter(q31_t* startSample, q31_t* endSample, int32_t sampleIncrement) {
+[[gnu::hot]] void LpLadderFilter::doFilter(q31_t* __restrict__ startSample, q31_t* endSample, int32_t sampleIncrement) {
 
 	// Half ladder
 	if (lpfMode == FilterMode::TRANSISTOR_12DB) {
 
-		q31_t* currentSample = startSample;
+		q31_t* __restrict__ currentSample = startSample;
 		do {
 			*currentSample = do12dBLPFOnSample(*currentSample, l);
 			currentSample += sampleIncrement;
@@ -186,7 +186,7 @@ q31_t LpLadderFilter::setConfig(q31_t lpfFrequency, q31_t lpfResonance, FilterMo
 	// Full ladder (regular)
 	else if (lpfMode == FilterMode::TRANSISTOR_24DB) {
 
-		q31_t* currentSample = startSample;
+		q31_t* __restrict__ currentSample = startSample;
 		do {
 			*currentSample = do24dBLPFOnSample(*currentSample, l);
 
@@ -198,7 +198,7 @@ q31_t LpLadderFilter::setConfig(q31_t lpfFrequency, q31_t lpfResonance, FilterMo
 	else if (lpfMode == FilterMode::TRANSISTOR_24DB_DRIVE) {
 		constexpr int32_t extraSaturationDrive = 1;
 		if (doOversampling) {
-			q31_t* currentSample = startSample;
+			q31_t* __restrict__ currentSample = startSample;
 			do {
 				// Linear interpolation works surprisingly well here - it doesn't lead to audible aliasing. But its big
 				// problem is that it kills the highest frequencies, which is especially noticeable when resonance is
@@ -229,7 +229,7 @@ q31_t LpLadderFilter::setConfig(q31_t lpfFrequency, q31_t lpfResonance, FilterMo
 		}
 
 		else {
-			q31_t* currentSample = startSample;
+			q31_t* __restrict__ currentSample = startSample;
 			do {
 				q31_t outputSampleToKeep = doDriveLPFOnSample(*currentSample, l);
 				*currentSample = getTanHUnknown(outputSampleToKeep, 4);
@@ -239,12 +239,12 @@ q31_t LpLadderFilter::setConfig(q31_t lpfFrequency, q31_t lpfResonance, FilterMo
 		}
 	}
 }
-[[gnu::hot]] void LpLadderFilter::doFilterStereo(q31_t* startSample, q31_t* endSample) {
+[[gnu::hot]] void LpLadderFilter::doFilterStereo(q31_t* __restrict__ startSample, q31_t* endSample) {
 
 	// Half ladder
 	if (lpfMode == FilterMode::TRANSISTOR_12DB) {
 
-		q31_t* currentSample = startSample;
+		q31_t* __restrict__ currentSample = startSample;
 		do {
 			*currentSample = do12dBLPFOnSample(*currentSample, l);
 			currentSample += 1;
@@ -255,7 +255,7 @@ q31_t LpLadderFilter::setConfig(q31_t lpfFrequency, q31_t lpfResonance, FilterMo
 
 	// Full ladder (regular)
 	else if (lpfMode == FilterMode::TRANSISTOR_24DB) {
-		q31_t* currentSample = startSample;
+		q31_t* __restrict__ currentSample = startSample;
 		do {
 			*currentSample = do24dBLPFOnSample(*currentSample, l);
 
@@ -269,7 +269,7 @@ q31_t LpLadderFilter::setConfig(q31_t lpfFrequency, q31_t lpfResonance, FilterMo
 	// Full ladder (drive)
 	else if (lpfMode == FilterMode::TRANSISTOR_24DB_DRIVE) {
 		if (doOversampling) {
-			q31_t* currentSample = startSample;
+			q31_t* __restrict__ currentSample = startSample;
 			do {
 				// Linear interpolation works surprisingly well here - it doesn't lead to audible aliasing. But its big
 				// problem is that it kills the highest frequencies, which is especially noticeable when resonance is
@@ -310,7 +310,7 @@ q31_t LpLadderFilter::setConfig(q31_t lpfFrequency, q31_t lpfResonance, FilterMo
 		}
 
 		else {
-			q31_t* currentSample = startSample;
+			q31_t* __restrict__ currentSample = startSample;
 			do {
 				q31_t outputSampleToKeep = doDriveLPFOnSample(*currentSample, l);
 				*currentSample = getTanHUnknown(outputSampleToKeep, 4);

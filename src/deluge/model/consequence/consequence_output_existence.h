@@ -26,6 +26,7 @@ class ConsequenceOutputExistence final : public Consequence {
 public:
 	ConsequenceOutputExistence(Output* newOutput, ExistenceChangeType newType);
 	Error revert(TimeType time, ModelStack* modelStack) override;
+	void prepareForDestruction(int32_t whichQueueActionIn, Song* song) override;
 
 	Output* output;
 	int32_t outputIndex;

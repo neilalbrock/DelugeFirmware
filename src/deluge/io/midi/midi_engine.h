@@ -105,7 +105,7 @@ public:
 	/// sets the due time given to everything sent from now on.
 	void setMIDIDue(uint32_t due) { midiDue_ = due; }
 	/// Move all queued MIDI due by now into the output buffers, in the order it was queued, then flush them. Returns
-	/// whether anything's still left in the output buffers (USB busy/locked, or UART still sending)
+	/// whether USB MIDI is still left in its output buffers (busy or locked). UART chains its own transfers
 	/// InterruptsDisabled struct is free in ISR so no overhead, and allows this to be called from offline rendering
 	bool flushDueMIDI(uint32_t now, const InterruptsDisabled&);
 	/// Move everything queued into the output buffers, then flush them
