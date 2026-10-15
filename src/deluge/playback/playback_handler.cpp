@@ -1629,6 +1629,9 @@ void PlaybackHandler::setupPlaybackUsingExternalClock(bool switchingFromInternal
 	// and when hearing these, well, this looks like infinite tempo.
 
 	numInputTickTimesCounted = 0;
+	// When switching over mid-play, lastInputTickReceived doesn't start at -1, so the first tick would otherwise be
+	// measured against whenever the last external clock run ended (or 0 after boot)
+	noPreviousInputTickTime = true;
 
 	stickyCurrentTimePerInternalTickInverse = veryCurrentTimePerInternalTickInverse =
 	    currentSong->divideByTimePerTimerTick; // Sets defaults
@@ -1936,7 +1939,9 @@ void PlaybackHandler::inputTick(bool fromTriggerClock, uint32_t time) {
 	lastInputTickReceived++;
 
 	// We do need an accurate measure of internal tick time immediately, for syncing LFOs
-	if (lastInputTickReceived != 0) {
+	bool havePreviousInputTickTime = !noPreviousInputTickTime;
+	noPreviousInputTickTime = false;
+	if (lastInputTickReceived != 0 && havePreviousInputTickTime) {
 		uint32_t timeLastInputTickTook = timeThisInputTick - timeLastInputTicks[0];
 
 		D_PRINTLN("time since last:  %d", timeLastInputTickTook);
