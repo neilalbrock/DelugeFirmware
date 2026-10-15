@@ -1713,7 +1713,10 @@ int32_t Sample::getValueSpan() {
 
 void Sample::finalizeAfterLoad(uint32_t fileSize) {
 
-	audioDataLengthBytes = std::min<uint64_t>(audioDataLengthBytes, fileSize - audioDataStartPosBytes);
+	// Bytes from the start of the audio data to the end of the file - 0 rather than wrapping round if the data
+	// supposedly starts beyond it
+	uint32_t bytesAvailable = (fileSize > audioDataStartPosBytes) ? fileSize - audioDataStartPosBytes : 0;
+	audioDataLengthBytes = std::min<uint64_t>(audioDataLengthBytes, bytesAvailable);
 
 	// If floating point file, Clusers can only be float-processed (as they're loaded) once we've found the data
 	// start-pos, which we just did, and since we've already loaded that first cluster which contains data, we'd better
@@ -1722,7 +1725,7 @@ void Sample::finalizeAfterLoad(uint32_t fileSize) {
 
 	uint32_t bytesPerSample = byteDepth * numChannels;
 
-	audioDataLengthBytes = std::min<uint64_t>(audioDataLengthBytes, fileSize - audioDataStartPosBytes);
+	audioDataLengthBytes = std::min<uint64_t>(audioDataLengthBytes, bytesAvailable);
 
 	lengthInSamples = audioDataLengthBytes / bytesPerSample;
 	audioDataLengthBytes = lengthInSamples * bytesPerSample; // Make sure it's an exact number of samples
