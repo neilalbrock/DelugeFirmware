@@ -47,8 +47,8 @@ void copy_with_prefix(char* buffer, size_t buffer_size, char const* prefix, char
 	if (buffer_size == 0) {
 		return;
 	}
-	strcpy(buffer, prefix);
-	strcat(buffer, value);
+	// Truncates to fit - the 7-segment popup's buffer holds 4 characters, so "CUSTOM" becomes "CUST"
+	snprintf(buffer, buffer_size, "%s%s", prefix, value);
 }
 
 } // namespace
