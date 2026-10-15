@@ -90,8 +90,9 @@ setMPEBendRange:
 		if (msb < 16) {
 			int32_t zone;
 
-			// Master Channel of Lower zone
-			if (ports[MIDI_DIRECTION_INPUT_TO_DELUGE].mpeLowerZoneLastMemberChannel && channel == 0) {
+			// Master Channel of Lower zone - which can also switch the zone on - unless channel 1 is currently a member
+			// of the upper zone
+			if (channel == 0 && ports[MIDI_DIRECTION_INPUT_TO_DELUGE].mpeUpperZoneLastMemberChannel != 0) {
 				zone = MPE_ZONE_LOWER_NUMBERED_FROM_0;
 				ports[MIDI_DIRECTION_INPUT_TO_DELUGE].mpeLowerZoneLastMemberChannel = msb;
 				ports[MIDI_DIRECTION_INPUT_TO_DELUGE]
@@ -120,8 +121,8 @@ resetBendRanges: // Have to reset pitch bend range for zone, according to MPE sp
 				soundEditor.mpeZonesPotentiallyUpdated();
 			}
 
-			// Master Channel of Upper zone
-			else if (ports[MIDI_DIRECTION_INPUT_TO_DELUGE].mpeUpperZoneLastMemberChannel < 15 && channel == 15) {
+			// Master Channel of Upper zone - likewise, unless channel 16 is currently a member of the lower zone
+			else if (channel == 15 && ports[MIDI_DIRECTION_INPUT_TO_DELUGE].mpeLowerZoneLastMemberChannel != 15) {
 				zone = MPE_ZONE_UPPER_NUMBERED_FROM_0;
 				ports[MIDI_DIRECTION_INPUT_TO_DELUGE].mpeUpperZoneLastMemberChannel = 15 - msb;
 				// Move other zone out of the way if necessary (MPE spec says to do this).
