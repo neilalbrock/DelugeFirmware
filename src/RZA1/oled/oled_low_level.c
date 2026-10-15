@@ -205,8 +205,8 @@ void sendCVWord(uint32_t message)
 }
 
 // Drains the priority CV slot if one is waiting. Must only be called at an inter-transfer boundary
-// (nothing currently on the bus). Returns true if a CV word was sent. Sends the word then calls
-// cvSent() so any gate waiting on this CV is released on schedule.
+// (nothing currently on the bus). Returns true if a CV word was sent. cvSPITransferComplete() calls cvSent() once the
+// last one has finished, releasing any gate waiting on it.
 bool sendPriorityCVIfPending()
 {
     if (!cvPriorityPending)
@@ -221,11 +221,6 @@ bool sendPriorityCVIfPending()
     cvPendingSlots &= ~(1 << slot);
     cv_sending = true;
     sendCVWord(cvPendingData[slot]);
-    // Gates waiting on CV wait for all of it - any other slots go out from cvSPITransferComplete()
-    if (!cvPriorityPending)
-    {
-        cvSent();
-    }
     return true;
 }
 
@@ -296,6 +291,14 @@ void cvSPITransferComplete(uint32_t sense)
 
     RSPI(SPI_CHANNEL_OLED_MAIN).SPBFCR.BYTE |=
         1 << 6; // Reset RX buffer. Slightly weird that we have to do it here, after the transfer? Or not weird?
+
+    // If that was the last CV word waiting, any gate held for the CV can go once the DAC has settled (see cvSent()).
+    // Not when the word starts: the DAC only updates 24 bits in, and until then cvOutPending must keep holding gates.
+    // Gates waiting on CV wait for all of it - any other slots go out first, below
+    if (!cvPriorityPending)
+    {
+        cvSent();
+    }
 
     // Another CV word turned up while this one was sending? Send it before returning to OLED frames
     //.

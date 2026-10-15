@@ -33,6 +33,7 @@ extern "C" {
 #include "RZA1/gpio/gpio.h"
 
 #include "RZA1/intc/devdrv_intc.h"
+#include "RZA1/mtu/mtu.h"
 #include "RZA1/oled/oled_low_level.h"
 #include "RZA1/rspi/rspi.h"
 }
@@ -412,9 +413,25 @@ void CVEngine::cvOutUpdated(const InterruptsDisabled& guard) {
 	}
 }
 
+// The CV DAC (MAX5136) updates its output on the 24th SCLK edge of a word - about 6.5us into it at the OLED units'
+// 3.7MHz - then takes about 5us to settle, longer for big steps (it slews at 1.25V/us). cvSent() runs from the
+// transfer-complete interrupt, about 2us after the update, so a gate held for that CV gets the rest of the time before
+// it goes. Only when a gate is actually waiting, so this costs nothing normally.
+constexpr uint32_t kCVSettleNS = 6000;
+constexpr uint16_t kCVSettleSuperfastTicks =
+    (uint64_t)kCVSettleNS * XTAL_SPEED_MHZ / 400000000; // see superfastTimerCountToNS()
+
+static void waitForCVToSettle() {
+	uint16_t startTime = *TCNT[TIMER_SYSTEM_SUPERFAST];
+	while ((uint16_t)(*TCNT[TIMER_SYSTEM_SUPERFAST] - startTime) < kCVSettleSuperfastTicks) {}
+}
+
 extern "C" {
-// Called both from the CV SPI ISR and from the main loop
+// Called from the CV SPI transfer-complete ISR once the last pending CV word has gone out
 void cvSent() {
+	if (cvEngine.hasGatesAwaitingCV()) {
+		waitForCVToSettle();
+	}
 	if (intc_func_active != 0) {
 		ISRCriticalSectionGuard guard;
 		cvEngine.cvOutUpdated(guard);

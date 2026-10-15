@@ -64,8 +64,13 @@ void usb_pstd_usb_handler(uint32_t sense)
     if (!alreadyAllDealtWith)
     { // return; // By Rohan
 
-        /* Write countup */
-        g_usb_pstd_usb_int.wp = ((g_usb_pstd_usb_int.wp + 1) % USB_INT_BUFSIZE);
+        /* Write countup - unless the buffer's full: wrapping onto the read position would make it look empty and lose
+         * every event still in it, so lose just this one instead */
+        uint16_t nextWp = ((g_usb_pstd_usb_int.wp + 1) % USB_INT_BUFSIZE);
+        if (nextWp != g_usb_pstd_usb_int.rp)
+        {
+            g_usb_pstd_usb_int.wp = nextWp;
+        }
     }
 
     /*

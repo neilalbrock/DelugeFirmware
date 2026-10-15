@@ -163,8 +163,11 @@
 #define USB_HUB_P3 ((uint16_t)0x0003)
 #define USB_HUB_P4 ((uint16_t)0x0004)
 
-/* Interrupt message num */
-#define USB_INTMSGMAX ((uint16_t)15u)
+/* Interrupt message num. Each one is posted to the scheduler by pointer and stays in use until the task has handled
+ * it, so this must be more than the scheduler's priority table can hold (USB_TABLEMAX, 20, in r_usb_hscheduler.c) -
+ * otherwise the ring wraps onto a message that's still queued, which then gets handled twice and the older event lost
+ */
+#define USB_INTMSGMAX ((uint16_t)24u)
 
 /* USB IP Number */
 #define USB_USBIP_0 (0u)

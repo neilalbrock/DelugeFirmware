@@ -10,7 +10,9 @@ namespace deluge::memory {
 /**
  * @brief A simple GMA wrapper that conforms to the C++ Allocator trait spec
  * (see: https://en.cppreference.com/w/cpp/named_req/Allocator)
- * @note "external" on the Deluge refers to the specially reserved non-stealable 8MiB region of SDRAM
+ * @note "external" on the Deluge refers to the specially reserved non-stealable region of SDRAM. When that's full this
+ * falls back to the stealable region rather than throwing straight away. deallocate() works out the region from the
+ * address
  *
  * @tparam T The type to allocate for
  */
@@ -28,7 +30,8 @@ public:
 		if (n == 0) {
 			return nullptr;
 		}
-		void* addr = GeneralMemoryAllocator::get().allocExternal(n * sizeof(T));
+		// External RAM first, then the stealable region if that's full - see operator new
+		void* addr = GeneralMemoryAllocator::get().allocLowSpeed(n * sizeof(T));
 		if (addr == nullptr) [[unlikely]] {
 			throw deluge::exception::BAD_ALLOC;
 		}

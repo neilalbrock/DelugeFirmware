@@ -76,6 +76,7 @@ public:
 	void physicallySwitchGate(int32_t channel);
 	// release any gates which were held while CV is pending now that it's done
 	void cvOutUpdated(const InterruptsDisabled&);
+	[[nodiscard]] bool hasGatesAwaitingCV() const { return gatesAwaitingCV != 0; }
 
 	void analogOutTick();
 	void playbackBegun();
