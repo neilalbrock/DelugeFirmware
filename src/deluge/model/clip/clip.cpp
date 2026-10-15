@@ -525,9 +525,17 @@ void Clip::beginInstance(Song* song, int32_t arrangementRecordPos) {
 		int32_t maxLength = arrangementRecordPos - clipInstance->pos;
 
 		if (maxLength <= 0) { // Shouldn't normally go below 0...
-			song->deletingClipInstanceForClip(output, clipInstance->clip, nullptr, false); // Calls audio routine...
-			clipInstanceI--;
-			goto setupClipInstance;
+			// Take the old instance over before getting rid of its Clip. If that Clip was cloned to arrangement-only,
+			// deletingClipInstanceForClip() frees it, and nothing may still point at it by then - it also calls the
+			// audio routine, which reads the instances
+			Clip* oldClip = clipInstance->clip;
+			clipInstance->clip = this;
+			clipInstance->length = loopLength;
+			clipInstance->pos = arrangementRecordPos;
+			if (oldClip != this) {
+				song->deletingClipInstanceForClip(output, oldClip, nullptr, false); // Calls audio routine...
+			}
+			return;
 		}
 		else {
 			if (clipInstance->length > maxLength) {
@@ -538,7 +546,6 @@ void Clip::beginInstance(Song* song, int32_t arrangementRecordPos) {
 
 	if (output->clipInstances.insertAtIndex(clipInstanceI) == Error::NONE) {
 		clipInstance = output->clipInstances.getElement(clipInstanceI);
-setupClipInstance:
 		clipInstance->clip = this;
 		clipInstance->length = loopLength;
 		clipInstance->pos = arrangementRecordPos;
