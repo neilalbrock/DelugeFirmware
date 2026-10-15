@@ -5,8 +5,9 @@
 // todo - make this work in unit tests, need to remove hard coded addresses in GMA
 #if !IN_UNIT_TESTS
 void* operator new(std::size_t n) noexcept(false) {
-	// allocate on external RAM
-	void* addr = GeneralMemoryAllocator::get().allocExternal(n);
+	// Allocate on external RAM - or, if that's full (it fills first in a big song), from the stealable region, freeing
+	// up cached sample data if need be, as allocLowSpeed() does for everything else rather than giving up
+	void* addr = GeneralMemoryAllocator::get().allocLowSpeed(n);
 	if (addr == nullptr) [[unlikely]] {
 		// The throwing operator new must never return null: std::string / std::vector and friends assume a non-null
 		// buffer, so returning null silently corrupts them. Throw the same lightweight exception the custom STL
