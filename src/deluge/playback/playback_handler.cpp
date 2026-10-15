@@ -772,6 +772,12 @@ void PlaybackHandler::actionTimerTickPart2() {
 			if (fractionNextAnalogOutTick < fractionLastTimerTick) {
 				doTriggerClockOutTick();
 				fractionNextAnalogOutTick += internalTicksPer;
+				// Still behind (edges closer together than render windows can keep up with) - drop the backlog and
+				// carry on from here, rather than scheduling from behind the timer tick
+				if (fractionNextAnalogOutTick < fractionLastTimerTick) {
+					resyncAnalogOutTicksToInternalTicks();
+					fractionNextAnalogOutTick = (lastTriggerClockOutTickDone + 1) * internalTicksPer;
+				}
 			}
 			// Schedule another trigger clock output tick
 			scheduleTriggerClockOutTickParamsKnown(analogOutTicksPer, fractionLastTimerTick, fractionNextAnalogOutTick);
@@ -790,7 +796,11 @@ void PlaybackHandler::actionTimerTickPart2() {
 			// immediately otherwise set it to be done by the audio engine
 			if (fractionNextMIDIClockOutTick < fractionLastTimerTick) {
 				doMIDIClockOutTick();
-				fractionNextMIDIClockOutTick += midiClockOutTicksPer;
+				fractionNextMIDIClockOutTick += internalTicksPer; // One output tick - same units as above
+				if (fractionNextMIDIClockOutTick < fractionLastTimerTick) {
+					resyncMIDIClockOutTicksToInternalTicks();
+					fractionNextMIDIClockOutTick = (lastMIDIClockOutTickDone + 1) * internalTicksPer;
+				}
 			}
 
 			// Schedule another MIDI clock output tick
@@ -833,10 +843,12 @@ void PlaybackHandler::scheduleTriggerClockOutTickParamsKnown(uint32_t analogOutT
                                                              uint64_t fractionNextAnalogOutTick) {
 	if (fractionNextAnalogOutTick < nextTimerTickScheduled * analogOutTicksPer) {
 		triggerClockOutTickScheduled = true;
+		// If it's already due (we're behind), do it as soon as possible rather than let the unsigned subtraction wrap
+		uint64_t fractionAfterLastTimerTick =
+		    (fractionNextAnalogOutTick > fractionLastTimerTick) ? fractionNextAnalogOutTick - fractionLastTimerTick : 0;
 		timeNextTriggerClockOutTick =
 		    (timeLastTimerTickBig
-		     + ((uint64_t)((fractionNextAnalogOutTick - fractionLastTimerTick) * currentSong->timePerTimerTickBig))
-		           / analogOutTicksPer)
+		     + ((uint64_t)(fractionAfterLastTimerTick * currentSong->timePerTimerTickBig)) / analogOutTicksPer)
 		    >> 32;
 	}
 }
@@ -909,10 +921,13 @@ void PlaybackHandler::scheduleMIDIClockOutTickParamsKnown(uint32_t midiClockOutT
                                                           uint64_t fractionNextMIDIClockOutTick) {
 	if (fractionNextMIDIClockOutTick < nextTimerTickScheduled * midiClockOutTicksPer) {
 		midiClockOutTickScheduled = true;
+		// If it's already due (we're behind), do it as soon as possible rather than let the unsigned subtraction wrap
+		uint64_t fractionAfterLastTimerTick = (fractionNextMIDIClockOutTick > fractionLastTimerTick)
+		                                          ? fractionNextMIDIClockOutTick - fractionLastTimerTick
+		                                          : 0;
 		timeNextMIDIClockOutTick =
 		    (timeLastTimerTickBig
-		     + ((uint64_t)((fractionNextMIDIClockOutTick - fractionLastTimerTick) * currentSong->timePerTimerTickBig))
-		           / midiClockOutTicksPer)
+		     + ((uint64_t)(fractionAfterLastTimerTick * currentSong->timePerTimerTickBig)) / midiClockOutTicksPer)
 		    >> 32;
 	}
 }
