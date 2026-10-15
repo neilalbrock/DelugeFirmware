@@ -293,10 +293,20 @@ doSetupWaveTable:
 					return error;
 				}
 				offset = swapEndianness32(offset);
+				// The offset and block size words come first, and the offset can't take the start past the chunk
+				if (bytesCurrentChunkNotRoundedUp < 8 || offset > bytesCurrentChunkNotRoundedUp - 8) {
+					return Error::FILE_CORRUPTED;
+				}
 				audioDataLengthBytes = bytesCurrentChunkNotRoundedUp - offset - 8;
 
 				// If we're here, we found the data! Take note of where it starts
 				audioDataStartPosBytes = reader->getBytePos() + 4 + offset;
+				// The chunk's own size might be bogus too. Data starting past the end of the file would leave the
+				// length clamp in Sample::finalizeAfterLoad() with nothing to work with, and playback indexing
+				// clusters that don't exist
+				if (audioDataStartPosBytes > reader->fileSize) {
+					return Error::FILE_CORRUPTED;
+				}
 
 				if (type == AudioFileType::WAVETABLE) {
 					goto doSetupWaveTable;

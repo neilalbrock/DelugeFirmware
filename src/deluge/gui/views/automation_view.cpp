@@ -2581,9 +2581,10 @@ void AutomationView::modEncoderButtonAction(uint8_t whichModEncoder, bool on) {
 // once parameter is selected
 // used to fine tune the values of non-midi parameters
 void AutomationView::selectEncoderAction(int8_t offset) {
-	// 5x acceleration of select encoder when holding the shift button
+	// 5x acceleration of select encoder when holding the shift button. Several detents can arrive at once, so clamp
+	// rather than let the int8_t wrap round and reverse direction
 	if (Buttons::isButtonPressed(deluge::hid::button::SHIFT)) {
-		offset = offset * 5;
+		offset = std::clamp<int32_t>(offset * 5, INT8_MIN, INT8_MAX);
 	}
 
 	// change midi CC or param ID
@@ -2896,9 +2897,10 @@ int32_t AutomationView::getNextSelectedParamArrayPosition(int32_t offset, int32_
 	if (onAutomationOverview()) {
 		idx = 0;
 	}
-	// if you are scrolling left and are at the beginning of the list, go to the end of the list
+	// if you are scrolling left and are at the beginning of the list, go to the end of the list - but no further
+	// than its start, if the step was bigger than the whole list (several detents at once, x5 with shift)
 	else if ((lastSelectedParamArrayPosition + offset) < 0) {
-		idx = numParams + offset;
+		idx = std::max<int32_t>(numParams + offset, 0);
 	}
 	// if you are scrolling right and are at the end of the list, go to the beginning of the list
 	else if ((lastSelectedParamArrayPosition + offset) > (numParams - 1)) {

@@ -790,8 +790,18 @@ void smSysex::sysexReceived(MIDICable& cable, uint8_t* data, int32_t len) {
 		return;
 	}
 
-	SysExDataEntry& de = SysExQ.emplace_back(cable, len);
-	memcpy(de.data, data, len);
+	// A client following the protocol can't have more requests outstanding than this (each session's message IDs run
+	// 1 to SYSEX_MSGID_MAX), and each entry costs ~1.3 KB of external memory however short the message. Past that it's
+	// a flood - drop it, rather than queueing until the allocation fails
+	if (SysExQ.size() >= MAX_SYSEX_SESSIONS * SYSEX_MSGID_MAX) {
+		return;
+	}
+	try {
+		SysExDataEntry& de = SysExQ.emplace_back(cable, len);
+		memcpy(de.data, data, len);
+	} catch (deluge::exception e) {
+		// Out of external memory - drop this one rather than freezing
+	}
 }
 
 void smSysex::handleNextSysEx() {

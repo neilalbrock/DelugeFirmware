@@ -2519,6 +2519,17 @@ void Sound::render(ModelStackWithThreeMainThings* modelStack, std::span<StereoSa
 	std::span sound_mono{sound_memory, output.size()};
 	std::span sound_stereo{(StereoSample*)sound_memory, output.size()};
 
+	q31_t compThreshold = paramManager->getUnpatchedParamSet()->getValue(params::UNPATCHED_COMPRESSOR_THRESHOLD);
+	bool recorderWantsAudio = recorder && recorder->status < RecorderStatus::FINISHED_CAPTURING_BUT_STILL_WRITING;
+
+	// With none of the Sound-level effects on, everything after the voices comes down to panning, the post-FX volume,
+	// the reverb send and adding into the output - which mixStraightToOutput() does in one pass over the voices'
+	// output, instead of expanding it to stereo and then making three more passes over that
+	bool mixingStraightToOutput = !voices_.empty() && modFXType_ == ModFXType::NONE && !delayWorkingState.doDelay
+	                              && !isBitcrushingEnabled(paramManager) && !isSRREnabled(paramManager)
+	                              && !hasBassAdjusted(paramManager) && !hasTrebleAdjusted(paramManager)
+	                              && !stutterer.isStuttering(this) && compThreshold <= 0 && !recorderWantsAudio;
+
 	if (!voices_.empty()) {
 
 		// Very often, we'll just apply panning here at the Sound level rather than the Voice level
@@ -2556,11 +2567,18 @@ void Sound::render(ModelStackWithThreeMainThings* modelStack, std::span<StereoSa
 
 		// We know that nothing's patched to pan, so can read it in this very basic way.
 		int32_t pan = paramManager->getPatchedParamSet()->getValue(params::LOCAL_PAN) >> 1;
-		int32_t amplitudeL, amplitudeR;
+		int32_t amplitudeL = 0;
+		int32_t amplitudeR = 0;
 		bool doPanning = AudioEngine::renderInStereo && shouldDoPanning(pan, &amplitudeL, &amplitudeR);
 
+		if (mixingStraightToOutput) {
+			mixStraightToOutput(sound_memory, output, reverbBuffer, reverbSendAmount, voice_rendered_in_stereo,
+			                    doPanning && (!voice_rendered_in_stereo || !applyingPanAtVoiceLevel), amplitudeL,
+			                    amplitudeR);
+		}
+
 		// If just rendered in mono, double that up to stereo now
-		if (!voice_rendered_in_stereo) {
+		else if (!voice_rendered_in_stereo) {
 			if (doPanning) {
 				// right to left because of in-place mono to stereo expansion
 				std::transform(sound_mono.rbegin(), sound_mono.rend(), sound_stereo.rbegin(), [=](q31_t sample) {
@@ -2597,41 +2615,50 @@ void Sound::render(ModelStackWithThreeMainThings* modelStack, std::span<StereoSa
 		}
 	}
 
-	int32_t postFXVolume = paramFinalValues[params::GLOBAL_VOLUME_POST_FX - params::FIRST_GLOBAL];
-	int32_t postReverbVolume = paramFinalValues[params::GLOBAL_VOLUME_POST_REVERB_SEND - params::FIRST_GLOBAL];
-
-	if (postReverbVolumeLastTime == -1) {
-		postReverbVolumeLastTime = postReverbVolume;
-	}
-
-	int32_t modFXDepth = paramFinalValues[params::GLOBAL_MOD_FX_DEPTH - params::FIRST_GLOBAL];
-	int32_t modFXRate = paramFinalValues[params::GLOBAL_MOD_FX_RATE - params::FIRST_GLOBAL];
-
-	processSRRAndBitcrushing(sound_stereo, &postFXVolume, paramManager);
-	processFX(sound_stereo, modFXType_, modFXRate, modFXDepth, delayWorkingState, &postFXVolume, paramManager,
-	          !voices_.empty(), reverbSendAmount >> 1);
-	processStutter(sound_stereo, paramManager);
-
-	processReverbSendAndVolume(sound_stereo, reverbBuffer, postFXVolume, postReverbVolume, reverbSendAmount, 0, true);
-
-	q31_t compThreshold = paramManager->getUnpatchedParamSet()->getValue(params::UNPATCHED_COMPRESSOR_THRESHOLD);
-	compressor.setThreshold(compThreshold);
-	if (compThreshold > 0) {
-		compressor.renderVolNeutral(sound_stereo, postFXVolume);
-	}
-	else {
+	if (mixingStraightToOutput) {
+		// What the skipped stages would still have done with everything off
+		sampleRateReductionOnLastTime = false;
+		compressor.setThreshold(compThreshold);
 		compressor.reset();
 	}
+	else {
+		int32_t postFXVolume = paramFinalValues[params::GLOBAL_VOLUME_POST_FX - params::FIRST_GLOBAL];
+		int32_t postReverbVolume = paramFinalValues[params::GLOBAL_VOLUME_POST_REVERB_SEND - params::FIRST_GLOBAL];
 
-	if (recorder && recorder->status < RecorderStatus::FINISHED_CAPTURING_BUT_STILL_WRITING) {
-		// we need to double it because for reasons I don't understand audio clips max volume is half the sample volume
-		recorder->feedAudio(sound_stereo, true, 2);
+		if (postReverbVolumeLastTime == -1) {
+			postReverbVolumeLastTime = postReverbVolume;
+		}
+
+		int32_t modFXDepth = paramFinalValues[params::GLOBAL_MOD_FX_DEPTH - params::FIRST_GLOBAL];
+		int32_t modFXRate = paramFinalValues[params::GLOBAL_MOD_FX_RATE - params::FIRST_GLOBAL];
+
+		processSRRAndBitcrushing(sound_stereo, &postFXVolume, paramManager);
+		processFX(sound_stereo, modFXType_, modFXRate, modFXDepth, delayWorkingState, &postFXVolume, paramManager,
+		          !voices_.empty(), reverbSendAmount >> 1);
+		processStutter(sound_stereo, paramManager);
+
+		processReverbSendAndVolume(sound_stereo, reverbBuffer, postFXVolume, postReverbVolume, reverbSendAmount, 0,
+		                           true);
+
+		compressor.setThreshold(compThreshold);
+		if (compThreshold > 0) {
+			compressor.renderVolNeutral(sound_stereo, postFXVolume);
+		}
+		else {
+			compressor.reset();
+		}
+
+		if (recorderWantsAudio) {
+			// we need to double it because for reasons I don't understand audio clips max volume is half the sample
+			// volume
+			recorder->feedAudio(sound_stereo, true, 2);
+		}
+
+		// add the sound to the output, i.e. output = output + sound
+		std::ranges::transform(output, sound_stereo, output.begin(), std::plus{});
+
+		postReverbVolumeLastTime = postReverbVolume;
 	}
-
-	// add the sound to the output, i.e. output = output + sound
-	std::ranges::transform(output, sound_stereo, output.begin(), std::plus{});
-
-	postReverbVolumeLastTime = postReverbVolume;
 
 	sourcesChanged = 0;
 	expressionSourcesChangedAtSynthLevel.reset();
@@ -2646,6 +2673,70 @@ void Sound::render(ModelStackWithThreeMainThings* modelStack, std::span<StereoSa
 	}
 
 	doParamLPF(output.size(), modelStackWithSoundFlags);
+}
+
+// For render() when no Sound-level effects are on: from the voices' output straight into output and the reverb buffer,
+// panning, sending to reverb and applying the post-FX volume ramp exactly as the mono-to-stereo expansion and
+// processReverbSendAndVolume() (with no pan of its own) would, then adding as render() does
+void Sound::mixStraightToOutput(q31_t* voicesOutput, std::span<StereoSample> output, int32_t* reverbBuffer,
+                                int32_t reverbSendAmount, bool voicesInStereo, bool doPanning, int32_t amplitudeL,
+                                int32_t amplitudeR) {
+	int32_t postFXVolume = paramFinalValues[params::GLOBAL_VOLUME_POST_FX - params::FIRST_GLOBAL];
+	int32_t postReverbVolume = paramFinalValues[params::GLOBAL_VOLUME_POST_REVERB_SEND - params::FIRST_GLOBAL];
+	if (postReverbVolumeLastTime == -1) {
+		postReverbVolumeLastTime = postReverbVolume;
+	}
+
+	int32_t reverbSendAmountAndPostFXVolume = multiply_32x32_rshift32(postFXVolume, reverbSendAmount) << 5;
+	int32_t volume = multiply_32x32_rshift32(postReverbVolume, postFXVolume) << 5;
+	auto postReverbSendVolumeIncrement =
+	    (int32_t)((double)(postReverbVolume - postReverbVolumeLastTime) / (double)output.size());
+	int32_t volumeIncrement = multiply_32x32_rshift32(postFXVolume, postReverbSendVolumeIncrement) << 5;
+
+	auto mix = [&](auto getSample) {
+		int32_t* __restrict__ reverb = reverbBuffer;
+		StereoSample* __restrict__ out = output.data();
+		for (size_t i = 0; i < output.size(); i++) {
+			StereoSample sample = getSample(i);
+			if (reverbSendAmount != 0) {
+				*(reverb++) += multiply_32x32_rshift32(sample.l + sample.r, reverbSendAmountAndPostFXVolume) << 1;
+			}
+			volume += volumeIncrement;
+			out[i].l += multiply_32x32_rshift32(sample.l, volume) << 5;
+			out[i].r += multiply_32x32_rshift32(sample.r, volume) << 5;
+		}
+	};
+
+	const q31_t* __restrict__ mono = voicesOutput;
+	const StereoSample* __restrict__ stereo = reinterpret_cast<const StereoSample*>(voicesOutput);
+	if (!voicesInStereo) {
+		if (doPanning) {
+			mix([&](size_t i) {
+				return StereoSample{.l = multiply_32x32_rshift32(mono[i], amplitudeL) << 2,
+				                    .r = multiply_32x32_rshift32(mono[i], amplitudeR) << 2};
+			});
+		}
+		else {
+			mix([&](size_t i) { return StereoSample::fromMono(mono[i]); });
+		}
+	}
+	else {
+		if (doPanning) {
+			mix([&](size_t i) {
+				return StereoSample{.l = multiply_32x32_rshift32(stereo[i].l, amplitudeL) << 2,
+				                    .r = multiply_32x32_rshift32(stereo[i].r, amplitudeR) << 2};
+			});
+		}
+		else {
+			mix([&](size_t i) { return stereo[i]; });
+		}
+	}
+
+	// We've generated some sound. If reverb is happening, make note
+	if (reverbSendAmount != 0) {
+		AudioEngine::timeThereWasLastSomeReverb = AudioEngine::audioSampleTimer;
+	}
+	postReverbVolumeLastTime = postReverbVolume;
 }
 
 // This is virtual, and gets extended by drums!

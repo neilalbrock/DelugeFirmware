@@ -203,7 +203,8 @@ Error String::shorten(int32_t newLength) {
 Error String::concatenate(String* otherString) {
 	if (!stringMemory) {
 		set(otherString);
-		if (getNumReasons() < 2 && otherString->stringMemory != nullptr) {
+		// If otherString was empty, so are we still - with no memory to read a reason count from
+		if (otherString->stringMemory != nullptr && getNumReasons() < 2) {
 			FREEZE_WITH_ERROR("S003");
 		}
 		return Error::NONE;

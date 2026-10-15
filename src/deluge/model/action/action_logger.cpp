@@ -856,7 +856,9 @@ void ActionLogger::notifyClipRecordingAborted(Clip* clip) {
 	// If there's an Action which only recorded the beginning of this Clip recording, we don't want it anymore.
 	if (firstAction[BEFORE] && firstAction[BEFORE]->type == ActionType::RECORD) {
 		Consequence* firstConsequence = firstAction[BEFORE]->firstConsequence;
-		if (!firstConsequence->next && firstConsequence->type == Consequence::CLIP_BEGIN_LINEAR_RECORD) {
+		// A RECORD Action can be empty - e.g. automation recording that turned out to have nothing to clear
+		if (firstConsequence && !firstConsequence->next
+		    && firstConsequence->type == Consequence::CLIP_BEGIN_LINEAR_RECORD) {
 			if (clip == ((ConsequenceClipBeginLinearRecord*)firstConsequence)->clip) {
 				deleteLastAction();
 			}

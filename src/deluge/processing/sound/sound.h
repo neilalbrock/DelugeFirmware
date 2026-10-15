@@ -354,6 +354,9 @@ private:
 	void stopParamLPF(ModelStackWithSoundFlags* modelStack);
 
 	bool renderingVoicesInStereo(ModelStackWithSoundFlags* modelStack);
+	[[gnu::noinline]] void mixStraightToOutput(q31_t* voicesOutput, std::span<StereoSample> output,
+	                                           int32_t* reverbBuffer, int32_t reverbSendAmount, bool voicesInStereo,
+	                                           bool doPanning, int32_t amplitudeL, int32_t amplitudeR);
 	void setupDefaultExpressionPatching(ParamManager* paramManager);
 	void pushSwitchActionOnEncoderForParam(int32_t p, bool on, ModelStackWithThreeMainThings* modelStack);
 	ModelStackWithAutoParam* getParamFromModEncoderDeeper(int32_t whichModEncoder,
