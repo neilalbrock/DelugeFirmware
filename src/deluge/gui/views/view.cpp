@@ -2148,8 +2148,8 @@ oledDrawString:
 			}
 
 			if (clip) {
-				// "SECTION NN" is 10, "NN: " is 3 => 10 over current name is always enough.
-				DEF_STACK_STRING_BUF(info, clip->name.getLength() + 10);
+				// "Section NNN" plus the null is 12, "NNN: " is 5 => 12 over current name is always enough.
+				DEF_STACK_STRING_BUF(info, clip->name.getLength() + 12);
 				if (clip->name.isEmpty()) {
 					info.append("Section ");
 					info.appendInt(clip->section + 1);
