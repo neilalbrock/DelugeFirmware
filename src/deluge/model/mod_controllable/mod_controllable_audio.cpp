@@ -1489,7 +1489,9 @@ void ModControllableAudio::wontBeRenderedForAWhile() {
 
 void ModControllableAudio::clearModFXMemory() {
 	if (modFXType_ == ModFXType::GRAIN) {
-		grainFX->clearGrainFXBuffer();
+		if (grainFX) {
+			grainFX->clearGrainFXBuffer();
+		}
 	}
 	else if (modFXType_ != ModFXType::NONE) {
 		modfx.resetMemory();

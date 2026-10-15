@@ -134,6 +134,9 @@ void smSysex::sendMsg(MIDICable& cable, JsonSerializer& writer) {
 	writer.writeByte(0xF7);
 
 	char* bitz = writer.getBufferPtr();
+	if (bitz == nullptr) [[unlikely]] {
+		return;
+	}
 	int32_t bw = writer.bytesWritten();
 	cable.sendSysex((const uint8_t*)bitz, bw);
 };

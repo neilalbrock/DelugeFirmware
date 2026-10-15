@@ -76,7 +76,8 @@ protected:
 	void readDone();
 
 	bool memoryBased = false;
-	int32_t readCount; // Used for multitask interleaving.
+	void* clusterBufferAllocation = nullptr; // What fileClusterBuffer was carved out of, if we allocated it
+	int32_t readCount;                       // Used for multitask interleaving.
 	bool reachedBufferEnd;
 	void resetReader();
 };
@@ -110,6 +111,7 @@ protected:
 	bool callRoutines = true;
 	uint8_t indentAmount;
 	char* writeClusterBuffer;
+	void* clusterBufferAllocation = nullptr; // What writeClusterBuffer was carved out of
 	uint32_t bufferSize;
 	int32_t fileWriteBufferCurrentPos;
 	int32_t fileTotalBytesWritten;

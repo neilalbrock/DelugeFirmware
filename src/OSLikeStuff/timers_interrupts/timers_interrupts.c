@@ -28,15 +28,17 @@ extern "C" {
 _Atomic int32_t critical_section_depth = 0;
 
 void ENTER_CRITICAL_SECTION() {
+	// Mask first: an ISR arriving between a 0->1 depth change and the CPSID would see depth 1, skip masking, and run
+	// its own critical section with IRQs enabled (the INTC handler re-enables them before calling each handler).
+	// memory creates a memory barrier in GCC to avoid reordering
+	// http://www.ibiblio.org/gferg/ldp/GCC-Inline-Assembly-HOWTO.html#ss5.3
+	__asm volatile("CPSID i" ::: "memory");
 	int32_t expected = 0;
 	int32_t desired = 1;
 	// if we go from 0 to 1 then we need to issue the synchronization instructions, otherwise just increment depth
 	// avoids having to clear the full pipeline
 	if (atomic_compare_exchange_strong_explicit(&critical_section_depth, &expected, desired, memory_order_relaxed,
 	                                            memory_order_relaxed)) {
-		// memory creates a memory barrier in GCC to avoid reordering
-		// http://www.ibiblio.org/gferg/ldp/GCC-Inline-Assembly-HOWTO.html#ss5.3
-		__asm volatile("CPSID i" ::: "memory");
 		__asm volatile("DSB");
 		__asm volatile("ISB");
 	}
@@ -67,6 +69,26 @@ void EXIT_CRITICAL_SECTION() {
 		FREEZE_WITH_ERROR("OH NO");
 	}
 #endif
+}
+
+uint32_t ENTER_CRITICAL_SECTION_FROM_ISR() {
+	uint32_t cpsr;
+	__asm volatile("MRS %0, cpsr" : "=r"(cpsr));
+	__asm volatile("CPSID i" ::: "memory");
+	__asm volatile("DSB");
+	__asm volatile("ISB");
+	// Count it, so that a CriticalSectionGuard nested inside doesn't unmask on its way out
+	atomic_fetch_add_explicit(&critical_section_depth, 1, memory_order_relaxed);
+	return cpsr;
+}
+
+void EXIT_CRITICAL_SECTION_FROM_ISR(uint32_t savedCPSR) {
+	atomic_fetch_sub_explicit(&critical_section_depth, 1, memory_order_relaxed);
+	if (!(savedCPSR & 0x80)) { // I bit was clear
+		__asm volatile("DSB");
+		__asm volatile("ISB");
+		__asm volatile("CPSIE i" ::: "memory");
+	}
 }
 
 void clearIRQInterrupt(int irqNumber) {

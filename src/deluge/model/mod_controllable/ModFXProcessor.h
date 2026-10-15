@@ -70,7 +70,8 @@ public:
 	void processModFX(std::span<StereoSample> buffer, const ModFXType& modFXType, int32_t modFXRate, int32_t modFXDepth,
 	                  int32_t* postFXVolume, UnpatchedParamSet* unpatchedParams, bool anySoundComingIn);
 	void resetMemory();
-	void setupBuffer();
+	/// Returns false if there wasn't the memory
+	bool setupBuffer();
 	void disableBuffer();
 	void tickLFO(int32_t numSamples, int32_t phaseIncrement) {
 		// Do Mod FX

@@ -320,7 +320,7 @@ const char* shapes_short[]{"tri", "sawd", "sawu", "sqre", "sin", "shld"};
 
 void DxParam::flashParamName() {
 	if (0 <= param && param < 6 * 21) {
-		char buf[12] = {0};
+		char buf[16] = {0}; // "o6 " plus the longest desc_op_short, "rate scale"
 		int op = param / 21;
 		int idx = param % 21;
 		buf[0] = 'o';

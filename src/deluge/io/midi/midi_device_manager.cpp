@@ -689,7 +689,9 @@ checkDevice:
 void ConnectedUSBMIDIDevice::bufferMessage(uint32_t fullMessage) {
 	uint32_t queued = ringBufWriteIdx - ringBufReadIdx;
 	if (queued > 16) {
-		if (!anyUSBSendingStillHappening[0]) {
+		// Which USB IP this device hangs off
+		int32_t ip = (this - &connectedUSBMIDIDevices[0][0]) / MAX_NUM_USB_MIDI_DEVICES;
+		if (!anyUSBSendingStillHappening[ip]) {
 			midiEngine.flushUSBMIDIOutput();
 		}
 		queued = ringBufWriteIdx - ringBufReadIdx;

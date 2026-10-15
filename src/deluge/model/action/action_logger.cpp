@@ -877,10 +877,14 @@ bool ActionLogger::undoJustOneConsequencePerNoteRow(ModelStack* modelStack) {
 	Consequence* firstConsequence = firstAction[BEFORE]->firstConsequence;
 	if (firstConsequence) { // Should always be true
 
-		// Work out if multiple Consequences per NoteRow (see big comment above)
-		int32_t firstNoteRowId = ((ConsequenceNoteArrayChange*)firstConsequence)->noteRowId;
+		// Work out if multiple Consequences per NoteRow (see big comment above). Only a note array change has a
+		// NoteRow id to compare
+		int32_t firstNoteRowId = (firstConsequence->type == Consequence::NOTE_ARRAY_CHANGE)
+		                             ? ((ConsequenceNoteArrayChange*)firstConsequence)->noteRowId
+		                             : 0;
 
-		Consequence* thisConsequence = firstConsequence->next;
+		Consequence* thisConsequence =
+		    (firstConsequence->type == Consequence::NOTE_ARRAY_CHANGE) ? firstConsequence->next : nullptr;
 		while (thisConsequence) {
 			if (thisConsequence->type == Consequence::NOTE_ARRAY_CHANGE
 			    && ((ConsequenceNoteArrayChange*)thisConsequence)->noteRowId == firstNoteRowId) {
@@ -903,8 +907,9 @@ gotMultipleConsequencesPerNoteRow:
 				firstConsequence->~Consequence();
 				delugeDealloc(firstConsequence);
 				firstConsequence = firstAction[BEFORE]->firstConsequence;
-			} while (thisConsequence->type != Consequence::NOTE_ARRAY_CHANGE
-			         || ((ConsequenceNoteArrayChange*)firstConsequence)->noteRowId != firstNoteRowId);
+			} while (firstConsequence
+			         && (firstConsequence->type != Consequence::NOTE_ARRAY_CHANGE
+			             || ((ConsequenceNoteArrayChange*)firstConsequence)->noteRowId != firstNoteRowId));
 
 			D_PRINTLN("did secret undo, just one Consequence");
 		}

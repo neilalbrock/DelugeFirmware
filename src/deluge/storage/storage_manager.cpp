@@ -790,8 +790,8 @@ bool StorageManager::buildPathToFile(const char* fileName) {
 
 FileReader::FileReader() {
 	// Filled a whole cluster at a time, and this is made before the card has been mounted, so allow for the biggest
-	void* temp = GeneralMemoryAllocator::get().allocLowSpeed(Cluster::kSizeMax + CACHE_LINE_SIZE * 2);
-	fileClusterBuffer = (char*)temp + CACHE_LINE_SIZE;
+	clusterBufferAllocation = GeneralMemoryAllocator::get().allocLowSpeed(Cluster::kSizeMax + CACHE_LINE_SIZE * 2);
+	fileClusterBuffer = clusterBufferAllocation ? (char*)clusterBufferAllocation + CACHE_LINE_SIZE : nullptr;
 }
 
 // Used to read an in-memory file stream.
@@ -805,8 +805,8 @@ FileReader::FileReader(char* memBuffer, uint32_t bufLen) {
 }
 
 FileReader::~FileReader() {
-	if (!memoryBased)
-		GeneralMemoryAllocator::get().dealloc(fileClusterBuffer);
+	// The in-memory constructor doesn't allocate, and leaves this null
+	GeneralMemoryAllocator::get().dealloc(clusterBufferAllocation);
 }
 
 void FileReader::resetReader() {
@@ -853,6 +853,9 @@ bool FileReader::readFileCluster() {
 	AudioEngine::logAction("readFileCluster");
 	if (memoryBased) {
 		return true;
+	}
+	if (fileClusterBuffer == nullptr) [[unlikely]] {
+		return false;
 	}
 
 	FRESULT result = f_read(&readFIL, (UINT*)fileClusterBuffer, Cluster::size, &currentReadBufferEndPos);
@@ -929,8 +932,8 @@ FRESULT FileReader::closeWriter() {
 
 FileWriter::FileWriter() {
 	bufferSize = 32768;
-	void* temp = GeneralMemoryAllocator::get().allocLowSpeed(bufferSize + CACHE_LINE_SIZE * 2);
-	writeClusterBuffer = (char*)temp + CACHE_LINE_SIZE;
+	clusterBufferAllocation = GeneralMemoryAllocator::get().allocLowSpeed(bufferSize + CACHE_LINE_SIZE * 2);
+	writeClusterBuffer = clusterBufferAllocation ? (char*)clusterBufferAllocation + CACHE_LINE_SIZE : nullptr;
 }
 
 FileWriter::FileWriter(bool inMem) : FileWriter() {
@@ -938,7 +941,7 @@ FileWriter::FileWriter(bool inMem) : FileWriter() {
 }
 
 FileWriter::~FileWriter() {
-	GeneralMemoryAllocator::get().dealloc(writeClusterBuffer);
+	GeneralMemoryAllocator::get().dealloc(clusterBufferAllocation);
 }
 
 int32_t FileWriter::bytesWritten() {
@@ -953,7 +956,7 @@ void FileWriter::resetWriter() {
 
 FRESULT FileWriter::closeWriter() {
 	if (memoryBased) {
-		if (fileWriteBufferCurrentPos < bufferSize) {
+		if (writeClusterBuffer != nullptr && fileWriteBufferCurrentPos < bufferSize) {
 			writeClusterBuffer[fileWriteBufferCurrentPos] = 0;
 			return FRESULT::FR_OK;
 		}
@@ -973,6 +976,10 @@ void FileWriter::writeBlock(uint8_t* block, uint32_t size) {
 extern "C" void routineForSD(void);
 
 void FileWriter::writeByte(int8_t b) {
+	if (writeClusterBuffer == nullptr) [[unlikely]] {
+		fileAccessFailedDuringWrite = true;
+		return;
+	}
 
 	if (fileWriteBufferCurrentPos == bufferSize) {
 		if (!memoryBased && !fileAccessFailedDuringWrite) {

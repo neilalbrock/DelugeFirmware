@@ -3297,14 +3297,14 @@ finishedNormalStuff:
 		// Notes stored as XML (before V1.4) - NOT CONVERTED TO ALSO WORK WITH JSON.
 		else if (!strcmp(tagName, "notes")) {
 			// Read each Note
-			uint32_t minPos = 0;
+			int32_t minPos = 0;
 			while (*(tagName = reader.readNextTagOrAttributeName())) {
 
 				if (!strcmp(tagName, "note")) {
 					// Set defaults for this Note
 					uint8_t velocity = 64;
-					uint32_t pos = 0;
-					uint32_t length = 1;
+					int32_t pos = 0;
+					int32_t length = 1;
 
 					// Read in this note's data
 					while (*(tagName = reader.readNextTagOrAttributeName())) {
@@ -3322,7 +3322,7 @@ finishedNormalStuff:
 
 						else if (!strcmp(tagName, "length")) {
 							length = reader.readTagOrAttributeValueInt();
-							length = std::max((uint32_t)1, (uint32_t)length);
+							length = std::max((int32_t)1, length);
 							reader.exitTag("length");
 						}
 
@@ -3331,7 +3331,9 @@ finishedNormalStuff:
 						}
 					}
 
-					if (!(pos < minPos || length < 0 || pos > kMaxSequenceLength - length)) {
+					// Signed, as in the hex reader below: a length over kMaxSequenceLength makes the right-hand side
+					// negative and rejects the note rather than wrapping
+					if (!(pos < minPos || length > kMaxSequenceLength || pos > kMaxSequenceLength - length)) {
 
 						minPos = pos + length;
 

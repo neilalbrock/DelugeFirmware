@@ -1,5 +1,6 @@
 #pragma once
 #include "definitions_cxx.hpp"
+#include <algorithm>
 #include <cstring>
 
 extern "C" {
@@ -38,11 +39,22 @@ public:
 		}
 	}
 
-	// TODO: Validate buffer size. These can overflow
-	void appendInt(int i, int minChars = 1) { intToString(i, buf_ + size(), minChars); }
-	void appendHex(int i, int minChars = 1) { intToHex(i, buf_ + size(), minChars); }
+	// These format into a local buffer and then append(), so they truncate rather than overflow
+	void appendInt(int i, int minChars = 1) {
+		char digits[16]; // sign, up to 12 digits, null
+		intToString(i, digits, std::min(minChars, 12));
+		append(digits);
+	}
+	void appendHex(int i, int minChars = 1) {
+		char digits[9];
+		intToHex(i, digits, std::min(minChars, 8));
+		append(digits);
+	}
 	void appendFloat(float f, int32_t minDecimals, int32_t maxDecimals) {
-		floatToString(f, buf_ + size(), minDecimals, maxDecimals);
+		char digits[40]; // sign, 10 digits, point, up to 16 decimals plus a rounding carry, null
+		maxDecimals = std::min<int32_t>(maxDecimals, 16);
+		floatToString(f, digits, std::min(minDecimals, maxDecimals), maxDecimals);
+		append(digits);
 	}
 
 	[[nodiscard]] char* data() { return buf_; }

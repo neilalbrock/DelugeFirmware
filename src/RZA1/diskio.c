@@ -200,6 +200,9 @@ DRESULT disk_read_without_streaming_first(BYTE pdrv, /* Physical drive nmuber to
             // Operatricks got! But I think I fixed.
             FREEZE_WITH_ERROR("E259");
         }
+        // Something yielded mid-transfer and came back here. Starting another SDHI command now would corrupt the
+        // outer one, and clearing the flag afterwards would let other SD users in before it finishes
+        return RES_NOTRDY;
     }
 
     // uint16_t startTime = MTU2.TCNT_0;
@@ -249,6 +252,8 @@ DRESULT disk_write(BYTE pdrv, /* Physical drive nmuber to identify the drive */
         {
             FREEZE_WITH_ERROR("E258");
         }
+        // As in disk_read_without_streaming_first()
+        return RES_NOTRDY;
     }
 
     currentlyAccessingCard = 1;
