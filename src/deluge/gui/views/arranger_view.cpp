@@ -3214,7 +3214,7 @@ void ArrangerView::graphicsRoutine() {
 				    && currentUIMode != UI_MODE_IMPLODE_ANIMATION) {
 
 					// If linear recording to this Output, re-render it
-					if (output->recordingInArrangement) {
+					if (output && output->recordingInArrangement) {
 						uiNeedsRendering(ui, (1 << yDisplay), 0);
 					}
 				}
