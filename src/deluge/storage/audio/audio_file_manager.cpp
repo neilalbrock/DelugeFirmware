@@ -1411,8 +1411,8 @@ void AudioFileManager::removeReasonFromCluster(Cluster& cluster, char const* err
 		}
 		FREEZE_WITH_ERROR(errorCode);
 #else
-		display->displayPopup(errorCode);  // For non testers, just display the error code without freezing
-		cluster->numReasonsToBeLoaded = 0; // Save it from crashing or anything
+		display->displayPopup(errorCode); // For non testers, just display the error code without freezing
+		cluster.numReasonsToBeLoaded = 0; // Save it from crashing or anything
 #endif
 	}
 }
