@@ -3800,7 +3800,7 @@ Instrument* InstrumentClip::changeOutputType(ModelStackWithTimelineCounter* mode
 	// Synth / Kit
 	else {
 		String newName;
-		Error error;
+		Error error = Error::NONE;
 
 		newName.set(&backedUpInstrumentName[newOutputTypeAsIdx]);
 		Browser::currentDir.set(&backedUpInstrumentDirPath[newOutputTypeAsIdx]);
