@@ -37,6 +37,12 @@ void ENTER_CRITICAL_SECTION();
 /// exit critical section - ensure it's paired with ENTER_CRITICAL_SECTION()
 void EXIT_CRITICAL_SECTION();
 
+/// critical section for interrupt handlers, which run with IRQs enabled (the INTC handler re-enables them) so
+/// higher-priority interrupts could otherwise preempt. Returns the CPSR to pass to EXIT_CRITICAL_SECTION_FROM_ISR(),
+/// which restores the previous I bit. Use the RAII ISRCriticalSectionGuard from C++ code
+uint32_t ENTER_CRITICAL_SECTION_FROM_ISR();
+void EXIT_CRITICAL_SECTION_FROM_ISR(uint32_t savedCPSR);
+
 static inline __attribute__((no_instrument_function)) void DISABLE_ALL_INTERRUPTS() {
 	// memory creates a memory barrier in GCC to avoid reordering
 	// http://www.ibiblio.org/gferg/ldp/GCC-Inline-Assembly-HOWTO.html#ss5.3
@@ -87,8 +93,15 @@ struct CriticalSectionGuard : InterruptsDisabled {
 	~CriticalSectionGuard() { EXIT_CRITICAL_SECTION(); }
 };
 
-/// Does nothing - for use from within an ISR, where interrupts are already disabled
-struct ISRCriticalSectionGuard : InterruptsDisabled {};
+/// For use from within an ISR. Interrupt handlers run with IRQs enabled, so this masks them too, and puts back
+/// whatever the I bit was on the way out rather than unconditionally re-enabling
+struct ISRCriticalSectionGuard : InterruptsDisabled {
+	ISRCriticalSectionGuard() : savedCPSR_(ENTER_CRITICAL_SECTION_FROM_ISR()) {}
+	~ISRCriticalSectionGuard() { EXIT_CRITICAL_SECTION_FROM_ISR(savedCPSR_); }
+
+private:
+	uint32_t savedCPSR_;
+};
 }
 #endif
 
