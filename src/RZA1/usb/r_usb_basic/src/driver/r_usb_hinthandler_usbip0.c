@@ -91,6 +91,7 @@ void usb_hstd_usb_handler(
     if (USB_OK != err)
     {
         USB_PRINTF1("### lib_UsbHandler DEF2 isnd_msg error (%ld)\n", err);
+        return; // Not queued, so this slot is still free for the next one
     }
 
     /* Renewal Message count  */
