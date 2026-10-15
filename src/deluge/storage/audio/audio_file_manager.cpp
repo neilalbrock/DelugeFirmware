@@ -547,8 +547,13 @@ notLoadableAsWaveTable:
 				}
 			}
 
+			// Protect the Sample before allocating. It can have no reasons left at this point (e.g. the browser has
+			// just stopped previewing it), which makes it stealable - and the allocation could take it.
+			foundAudioFile->addReason();
+
 			void* waveTableMemory = GeneralMemoryAllocator::get().allocStealable<WaveTable>();
 			if (!waveTableMemory) {
+				foundAudioFile->removeReason("E398");
 				*error = Error::INSUFFICIENT_RAM;
 				return NULL;
 			}
@@ -556,10 +561,10 @@ notLoadableAsWaveTable:
 			WaveTable* newWaveTable = new (waveTableMemory) WaveTable;
 
 			newWaveTable->addReason(); // So it's protected while setting up.
-			foundAudioFile->addReason();
 
 			*error = newWaveTable->setup((Sample*)foundAudioFile);
 			if (*error != Error::NONE) {
+				foundAudioFile->removeReason("E398");
 waveTableCloneError:
 				newWaveTable->~WaveTable();
 				delugeDealloc(waveTableMemory);
