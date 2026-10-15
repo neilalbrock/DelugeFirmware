@@ -491,7 +491,6 @@ bool ResizeableArray::ensureEnoughSpaceAllocated(int32_t numAdditionalElementsNe
 	int32_t newNum = numElements + numAdditionalElementsNeeded;
 
 	void* __restrict__ oldMemory = memory;
-	void* __restrict__ oldMemoryAllocationStart = memoryAllocationStart;
 	int32_t oldMemoryStart = memoryStart;
 	int32_t oldMemorySize = memorySize;
 
@@ -561,9 +560,9 @@ getBrandNewMemory:
 
 allocationFail:
 
-			// Put everything back how it was and get out
+			// Put everything back how it was and get out. Not memoryAllocationStart though - if we extended the
+			// allocation leftwards above, it really does start earlier now, and the elements haven't moved
 			memory = oldMemory;
-			memoryAllocationStart = oldMemoryAllocationStart;
 			memoryStart = oldMemoryStart;
 			memorySize = oldMemorySize;
 
