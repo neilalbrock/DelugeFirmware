@@ -2526,8 +2526,18 @@ void Song::renderAudio(std::span<StereoSample> outputBuffer, int32_t* reverbBuff
 
 		bool isClipActiveNow =
 		    (output->getActiveClip() && isClipActive(output->getActiveClip()->getClipBeingRecordedFrom()));
+		// An output being recorded by a monitoring (sampler / looper) AudioOutput is normally rendered by that, not
+		// here - unless it won't be this time (e.g. a sampler whose clip has been recorded, so isn't monitoring any
+		// more)
+		bool shouldRender = output->shouldRenderInSong();
+		if (!shouldRender) {
+			Output* monitor = output->getOutputRecordingThis();
+			shouldRender = !(monitor && monitor->type == OutputType::AUDIO && monitor->inValidState
+			                 && monitor->shouldRenderInSong()
+			                 && static_cast<AudioOutput*>(monitor)->willMonitorRecordingSource(this));
+		}
 		ENTER_CRITICAL_SECTION();
-		if (output->shouldRenderInSong()) {
+		if (shouldRender) {
 			output->renderOutput(modelStack, outputBuffer, reverbBuffer, volumePostFX >> 1, sideChainHitPending,
 			                     !isClipActiveNow, isClipActiveNow);
 		}

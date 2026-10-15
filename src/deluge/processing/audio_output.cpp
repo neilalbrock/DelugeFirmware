@@ -114,6 +114,13 @@ void AudioOutput::resetEnvelope() {
 	overrideAmplitudeEnvelopeReleaseRate = 0;
 }
 
+bool AudioOutput::willMonitorRecordingSource(Song* song) {
+	return inputChannel == AudioInputChannel::SPECIFIC_OUTPUT && outputRecordingFrom != nullptr
+	       && outputRecordingFrom->getOutputRecordingThis() == this // Only the one holding the claim monitors it
+	       && outputRecordingFrom->getActiveClip() != nullptr && modeAllowsMonitoring()
+	       && song->isOutputActiveInArrangement(this);
+}
+
 bool AudioOutput::modeAllowsMonitoring() const {
 	if (mode == AudioOutputMode::player) {
 		return false;
@@ -273,9 +280,7 @@ renderEnvelope:
 	}
 	// Only render the record-source if it has an active clip: Output::renderOutput is documented to be called only
 	// when there's an activeClip, but this branch bypasses the inValidState guard in Song::renderAudio.
-	else if (modeAllowsMonitoring() && modelStack->song->isOutputActiveInArrangement(this)
-	         && inputChannel == AudioInputChannel::SPECIFIC_OUTPUT && (outputRecordingFrom != nullptr)
-	         && (outputRecordingFrom->getActiveClip() != nullptr)) {
+	else if (willMonitorRecordingSource(modelStack->song)) {
 		rendered = true;
 		std::byte modelStackMemory[MODEL_STACK_MAX_SIZE];
 		ModelStack* songModelStack = setupModelStackWithSong(modelStackMemory, currentSong);

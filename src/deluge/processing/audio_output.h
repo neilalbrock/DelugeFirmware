@@ -128,6 +128,10 @@ public:
 		}
 	}
 
+	/// Whether renderGlobalEffectableForClip() will render outputRecordingFrom this block. Song::renderAudio() renders
+	/// that output itself when this is false, so it's neither silenced nor rendered twice.
+	bool willMonitorRecordingSource(Song* song);
+
 	/// If we are a SAMPLER or a LOOPER then we're monitoring the audio, so tell the other output that we're in charge
 	/// of rendering.
 	void updateMonitoringClaim() {
