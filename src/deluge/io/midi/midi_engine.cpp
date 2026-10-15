@@ -169,7 +169,7 @@ void usbSendCompleteAsPeripheral(int32_t ip) {
 	else {
 		// this effectively serves as a lock, does the sending part of the device, including the read part of the
 		// ring buffer "belong" to ongoing/scheduled interrupts. Document this better.
-		anyUSBSendingStillHappening[0] = 0;
+		anyUSBSendingStillHappening[ip] = 0;
 	}
 }
 
